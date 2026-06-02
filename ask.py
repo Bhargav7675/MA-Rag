@@ -4,8 +4,14 @@
 import argparse
 import json
 import sys
+import warnings
 
 from dotenv import load_dotenv
+
+# Quieter terminal output for demos (upstream SSL / LangGraph / Pydantic noise).
+warnings.filterwarnings("ignore", message=".*urllib3 v2 only supports OpenSSL.*")
+warnings.filterwarnings("ignore", message=".*allowed_objects.*")
+warnings.filterwarnings("ignore", category=UserWarning, module=r"pydantic\.main")
 
 from langchain_core.prompts.chat import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
 
