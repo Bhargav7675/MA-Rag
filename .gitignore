@@ -1,6 +1,7 @@
 .venv/
 .vscode/
 .env
+local_index/
 .DS_Store
 __pycache__/
 *.pyc
