@@ -75,21 +75,6 @@ During Phase 0 testing on a sample knowledge corpus, the system correctly answer
 
 ---
 
-## Multi-Hop Facts (For Demo Questions)
-
-Use these relationships for multi-step reasoning tests:
-
-- The volunteer researcher implementing MA-RAG Phase 0 is **Bhargav Boyapati**.
-- The employer and research lead Bhargav works with is **Chandra Shekar Konda**.
-- Chandra Shekar Konda is the **AI Technical Director at Oracle**.
-- The IEEE task force associated with this effort is **Talent Meets AI**.
-- The research project focuses on **MA-RAG** multi-agent retrieval-augmented generation.
-- Phase 0 status for the prototype is **complete**; Phase 1 is **planned**.
-- The interactive entry point for asking a single question is `**ask.py`**.
-- Local documents are ingested using `**ingest.py**`.
-
----
-
 ## Frequently Useful Facts (Single-Hop)
 
 - **Employer name (research lead):** Chandra Shekar Konda
@@ -102,6 +87,29 @@ Use these relationships for multi-step reasoning tests:
 - **Research system:** MA-RAG
 - **Current completed phase:** Phase 0
 - **Next phase:** Phase 1 (explicit in-process agents)
+- **Default LLM for agents:** gpt-4o-mini
+- **Local question entry point:** ask.py
+- **Local document ingestion command:** ingest.py
+- **Retrieval index technology:** FAISS (local_index/)
+
+---
+
+## Frequently Useful Facts (Multi-Hop)
+
+Use these chained relationships for multi-step demo questions (planner should use 2+ steps):
+
+
+| Hop | Fact                                                                                       |
+| --- | ------------------------------------------------------------------------------------------ |
+| 1   | The volunteer researcher implementing MA-RAG Phase 0 is **Bhargav Boyapati**.              |
+| 2   | The research lead and employer stakeholder Bhargav works with is **Chandra Shekar Konda**. |
+| 3   | **Chandra Shekar Konda** is the **AI Technical Director at Oracle**.                       |
+| 4   | The IEEE task force for this effort is **Talent Meets AI** (IEEE Talent Meets AI).         |
+| 5   | The research system being prototyped is **MA-RAG** (multi-agent RAG).                      |
+| 6   | **Phase 0** is **complete**; **Phase 1** (explicit in-process agents) is **planned**.      |
+
+
+
 
 ---
 
