@@ -1,0 +1,3 @@
+Acme Corp was founded in 2020 in Austin, Texas.
+The CEO is Jane Smith.
+The main product is CloudAssist, launched in 2022.
