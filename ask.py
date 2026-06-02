@@ -109,7 +109,7 @@ def main():
         sys.exit(1)
 
     if use_local:
-        retriever_tool = LocalRetrieverTool()
+        retriever_tool = LocalRetrieverTool(top_k=3)
     else:
         retriever_tool = build_retriever_tool(gpu_ids=args.gpus)
 
