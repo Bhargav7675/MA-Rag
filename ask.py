@@ -26,6 +26,7 @@ from src.pipeline import (
     has_retrieval_index,
     run_question,
 )
+from src.workflow import WorkflowEngine, format_workflow_output
 from src.prompt_template import qa_human_message, qa_input_variables, qa_system_message
 from src.utils import QAAnswerFormat
 
@@ -57,6 +58,11 @@ def parse_args():
         type=str,
         default=None,
         help="Optional path to write full graph state as JSON",
+    )
+    parser.add_argument(
+        "--agentic",
+        action="store_true",
+        help="Use typed agent workflow (Track B) instead of LangGraph pipeline",
     )
     return parser.parse_args()
 
@@ -119,6 +125,15 @@ def main():
         for idx, (doc_id, doc) in enumerate(zip(doc_ids, docs), start=1):
             print(f"\n--- {idx}. {doc_id} ---")
             print(doc[:1000])
+        return
+
+    if args.agentic:
+        engine = WorkflowEngine(retriever_tool)
+        package = engine.run(question)
+        print(format_workflow_output(package))
+        if args.output_json:
+            dump_json(args.output_json, package.model_dump())
+            print(f"\nWrote full trace to {args.output_json}")
         return
 
     graph = build_ma_rag_graph(retriever_tool)
