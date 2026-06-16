@@ -108,6 +108,10 @@ Answers come from an ingested document corpus about the MA-RAG research prototyp
 
 For direct factual questions about MA-RAG status, phases, team, or project facts, use ONE plan step: repeat the user's question verbatim as the only step.
 Use at most 2 steps for simple facts. Reserve multi-step plans for true multi-hop questions only.
+
+Multi-hop example (two retrieval steps, not aggregate):
+Question: Who does the volunteer researcher on MA-RAG work with, and what is that person's title at Oracle?
+Steps: ["Who does the volunteer researcher on MA-RAG work with?", "What is that person's title at Oracle?"]
 """
 
 qa_grounded_addon = """
@@ -128,6 +132,24 @@ Respond using exactly these labels:
 Output: Successful or Unsuccessful
 Final answer: <answer for the original question>
 Score: <integer 0-10>
+"""
+
+summary_multi_step_addon = """
+This is a MULTI-STEP plan. Combine the successful step answers into ONE concise final answer.
+
+Rules:
+- Use ONLY facts already present in the step answers below.
+- Answer the FULL original question in one or two short sentences.
+- Do NOT say information is missing, unclear, or not stated if a step answer already contains that fact.
+- Do NOT contradict any successful step answer.
+- Do NOT add facts that are not supported by step answers.
+"""
+
+critic_multi_step_addon = """
+Multi-step workflow: the step evidence is authoritative.
+- If the draft hedges (e.g. "not stated", "not explicitly stated") but step answers contain the fact, FAIL and fix it.
+- Revised answer must include all key facts from successful steps that answer the original question.
+- Do not drop names, titles, or companies present in step answers.
 """
 
 evidence_curator_system_message = """You assess whether retrieved document chunks are enough to answer a sub-question.

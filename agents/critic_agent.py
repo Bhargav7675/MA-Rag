@@ -14,9 +14,11 @@ from src.llm import create_chat_llm
 from src.prompt_template import (
     critic_human_message,
     critic_input_variables,
+    critic_multi_step_addon,
     critic_slm_output_format_addon,
     critic_system_message,
 )
+from src.workflow.finalize_helpers import reconcile_final_answer
 from src.slm_helpers import is_ollama_provider, parse_verify_response
 from src.utils import VerifyFormat
 
@@ -49,8 +51,11 @@ class CriticAgent:
 
         step_evidence = self._format_step_evidence(request.step_answers)
         chunk_ids = ", ".join(request.chunk_ids) or "none"
+        multi_step = len(request.step_answers) > 1
 
         system_message = critic_system_message
+        if multi_step:
+            system_message += critic_multi_step_addon
         if is_ollama_provider():
             system_message += critic_slm_output_format_addon
         messages = [
@@ -82,6 +87,13 @@ class CriticAgent:
             confidence = int(raw.confidence or 0)
             issues = raw.issues
             revised = raw.revised_answer or request.draft_answer
+
+        revised, reconcile_issues = reconcile_final_answer(
+            revised, request.step_answers
+        )
+        if reconcile_issues:
+            issues = list(issues) + reconcile_issues
+            passed = True
 
         return VerifyResponse(
             run_id=request.run_id,

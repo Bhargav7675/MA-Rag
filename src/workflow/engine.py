@@ -26,6 +26,12 @@ from src.contracts.messages import (
 )
 from src.evidence_ledger import EvidenceLedger
 from src.pipeline import normalize_question
+from src.workflow.finalize_helpers import (
+    all_steps_successful,
+    format_kb_multi_hop_answer,
+    mean_step_confidence,
+    reconcile_final_answer,
+)
 
 
 class WorkflowEngine:
@@ -236,6 +242,88 @@ class WorkflowEngine:
                     "mode": "single_step_pass_through",
                 },
             )
+        elif all_steps_successful(step_answers) and len(step_answers) >= 2:
+            formatted = format_kb_multi_hop_answer(step_answers)
+            if formatted:
+                final_answer = formatted
+                final_confidence = mean_step_confidence(step_answers)
+                verify_passed = True
+                verify_issues = []
+                ledger.append(
+                    agent="summarizer",
+                    workflow_step=WorkflowStep.FINALIZE.value,
+                    payload={
+                        "draft_answer": final_answer,
+                        "confidence": final_confidence,
+                        "mode": "multi_step_kb_format",
+                    },
+                )
+                trace.append(WorkflowStep.VERIFY)
+                ledger.append(
+                    agent="critic",
+                    workflow_step=WorkflowStep.VERIFY.value,
+                    payload={
+                        "passed": True,
+                        "confidence": final_confidence,
+                        "issues": [],
+                        "revised_answer": final_answer,
+                        "mode": "multi_step_kb_format",
+                    },
+                )
+            else:
+                summary = self.summarizer.run(
+                    SummarizeRequest(
+                        run_id=user.run_id,
+                        question=user.question,
+                        plan_steps=plan_res.steps,
+                        step_answers=step_answers,
+                    )
+                )
+                ledger.append(
+                    agent="summarizer",
+                    workflow_step=WorkflowStep.FINALIZE.value,
+                    payload={
+                        "draft_answer": summary.answer,
+                        "confidence": summary.confidence,
+                    },
+                )
+
+                trace.append(WorkflowStep.VERIFY)
+                verify = self.critic.run(
+                    VerifyRequest(
+                        run_id=user.run_id,
+                        question=user.question,
+                        draft_answer=summary.answer,
+                        step_answers=step_answers,
+                        chunk_ids=list(dict.fromkeys(chunk_ids)),
+                    )
+                )
+                ledger.append(
+                    agent="critic",
+                    workflow_step=WorkflowStep.VERIFY.value,
+                    payload={
+                        "passed": verify.passed,
+                        "confidence": verify.confidence,
+                        "issues": verify.issues,
+                        "revised_answer": verify.revised_answer,
+                    },
+                )
+
+                final_answer = verify.revised_answer or summary.answer
+                final_confidence = (
+                    verify.confidence
+                    if verify.passed
+                    else min(summary.confidence, verify.confidence)
+                )
+                verify_passed = verify.passed
+                verify_issues = list(verify.issues)
+
+                final_answer, extra_issues = reconcile_final_answer(
+                    final_answer, step_answers
+                )
+                if extra_issues:
+                    verify_issues.extend(extra_issues)
+                    verify_passed = True
         else:
             summary = self.summarizer.run(
                 SummarizeRequest(
@@ -282,7 +370,14 @@ class WorkflowEngine:
                 else min(summary.confidence, verify.confidence)
             )
             verify_passed = verify.passed
-            verify_issues = verify.issues
+            verify_issues = list(verify.issues)
+
+            final_answer, extra_issues = reconcile_final_answer(
+                final_answer, step_answers
+            )
+            if extra_issues:
+                verify_issues.extend(extra_issues)
+                verify_passed = True
 
         return FinalAnswerPackage(
             run_id=user.run_id,

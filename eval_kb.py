@@ -86,7 +86,10 @@ def main() -> int:
         print(f"Q: {question}")
         package = engine.run(question)
         answer_lower = (package.answer or "").lower()
-        ok = any(part.lower() in answer_lower for part in expected_parts)
+        if label == "multi-hop":
+            ok = all(part.lower() in answer_lower for part in expected_parts)
+        else:
+            ok = any(part.lower() in answer_lower for part in expected_parts)
         verify_ok = package.verify_passed is not False
         case_pass = ok and verify_ok and bool(package.answer.strip())
 

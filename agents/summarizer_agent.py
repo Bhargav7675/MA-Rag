@@ -15,10 +15,12 @@ from src.llm import create_chat_llm
 from src.prompt_template import (
     summary_human_message,
     summary_input_variables,
+    summary_multi_step_addon,
     summary_slm_output_format_addon,
     summary_system_message,
 )
 from src.slm_helpers import is_ollama_provider, parse_summary_response
+from src.workflow.finalize_helpers import mean_step_confidence, reconcile_final_answer
 from src.utils import PlanSummaryFormat
 
 AGENT_ID = "summarizer"
@@ -42,6 +44,8 @@ class SummarizerAgent:
             )
 
         system_message = summary_system_message
+        if len(request.step_answers) > 1:
+            system_message += summary_multi_step_addon
         if is_ollama_provider():
             system_message += summary_slm_output_format_addon
         messages = [
@@ -65,6 +69,10 @@ class SummarizerAgent:
             answer = out.answer
             confidence = int(out.score or 0)
             summary = out.output
+
+        answer, _ = reconcile_final_answer(answer, request.step_answers)
+        if confidence == 0 and request.step_answers:
+            confidence = mean_step_confidence(request.step_answers)
 
         return SummarizeResponse(
             run_id=request.run_id,
