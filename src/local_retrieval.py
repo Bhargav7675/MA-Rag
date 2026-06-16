@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional, Sequence
 
 import faiss
 import numpy as np
@@ -102,14 +102,28 @@ def read_supported_file(path: Path) -> str:
     raise ValueError(f"Unsupported file type: {path}")
 
 
-def iter_supported_files(root: Path) -> Iterable[Path]:
+def _is_excluded(path: Path, exclude_dir_names: Sequence[str]) -> bool:
+    if not exclude_dir_names:
+        return False
+    return any(part in exclude_dir_names for part in path.parts)
+
+
+def iter_supported_files(
+    root: Path,
+    *,
+    exclude_dir_names: Sequence[str] = (),
+) -> Iterable[Path]:
     supported = {".pdf", ".txt", ".md"}
-    if root.is_file() and root.suffix.lower() in supported:
-        yield root
+    if root.is_file():
+        if root.suffix.lower() in supported and not _is_excluded(root, exclude_dir_names):
+            yield root
         return
     for path in sorted(root.rglob("*")):
-        if path.is_file() and path.suffix.lower() in supported:
-            yield path
+        if not path.is_file() or path.suffix.lower() not in supported:
+            continue
+        if _is_excluded(path, exclude_dir_names):
+            continue
+        yield path
 
 
 def chunk_text(text: str, *, chunk_size: int = 1200, overlap: int = 200) -> list[str]:
@@ -130,10 +144,11 @@ def chunk_text(text: str, *, chunk_size: int = 1200, overlap: int = 200) -> list
 def build_local_index(
     input_path: Path,
     *,
-    index_dir: Path | None = None,
+    index_dir: Optional[Path] = None,
     chunk_size: int = 1200,
     overlap: int = 200,
     batch_size: int = 16,
+    exclude_dir_names: Sequence[str] = ("wiki",),
 ) -> int:
     index_dir = index_dir or get_local_index_dir()
     input_path = input_path.expanduser().resolve()
@@ -141,7 +156,7 @@ def build_local_index(
         raise FileNotFoundError(f"Input path does not exist: {input_path}")
 
     chunks: list[LocalChunk] = []
-    for file_path in iter_supported_files(input_path):
+    for file_path in iter_supported_files(input_path, exclude_dir_names=exclude_dir_names):
         text = read_supported_file(file_path)
         rel_source = str(file_path.relative_to(input_path)) if input_path.is_dir() else file_path.name
         for chunk_index, chunk in enumerate(chunk_text(text, chunk_size=chunk_size, overlap=overlap)):

@@ -7,10 +7,20 @@
 - Demo knowledge under `docs/`
 - `PHASE_0_REPORT.md`
 
+## Done — Track B + SLM + Track C (local prototype)
+
+- Typed agent contracts (`src/contracts/messages.py`)
+- Agents: Planner, Retrieval, RAG step, Step definer, Summarizer
+- `WorkflowEngine` + `ask.py --agentic`
+- On-prem SLM via Ollama (`MA_RAG_LLM_PROVIDER=ollama`)
+- Evidence Curator + Critic agents
+- Per-run evidence ledger (`data/evidence_ledger/`)
+- KB eval harness: `python eval_kb.py`
+
 ## Next
 
-- Evidence Curator + Critic agents
-- Workflow runtime (enterprise 9-step model)
-- Typed agent messages (in-process, then A2A services)
-- Optional: SLM for extract / tiered models
+- Re-ingest without `docs/wiki/` by default: `python ingest.py ./docs`
+- Multi-hop SLM tuning and regression eval
+- Per-agent model config (hybrid SLM + cloud planner optional)
+- A2A services + MCP tool gateway (later)
 - API ingress (later)

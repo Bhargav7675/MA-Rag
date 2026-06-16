@@ -222,3 +222,6 @@ class FinalAnswerPackage(BaseModel):
     step_answers: list[StepAnswer]
     workflow_trace: list[WorkflowStep] = Field(default_factory=list)
     chunk_ids_used: list[str] = Field(default_factory=list)
+    verify_passed: Optional[bool] = None
+    verify_issues: list[str] = Field(default_factory=list)
+    evidence_ledger_path: Optional[str] = None

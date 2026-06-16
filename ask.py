@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module=r"pydantic\.main"
 
 from langchain_core.prompts.chat import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
 
-from src.llm import create_chat_llm
+from src.llm import create_chat_llm, describe_active_llm
 from src.env import get_local_index_dir
 from src.local_retrieval import LocalRetrieverTool, local_index_exists
 from src.pipeline import (
@@ -118,6 +118,8 @@ def main():
         retriever_tool = LocalRetrieverTool(top_k=3)
     else:
         retriever_tool = build_retriever_tool(gpu_ids=args.gpus)
+
+    print(f"LLM: {describe_active_llm()}", file=sys.stderr)
 
     if args.retrieve_only:
         docs, doc_ids = retriever_tool(question)

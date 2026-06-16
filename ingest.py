@@ -26,18 +26,27 @@ def parse_args():
     parser.add_argument("--chunk-size", type=int, default=1200)
     parser.add_argument("--overlap", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument(
+        "--include-wiki",
+        action="store_true",
+        help="Include docs/wiki/ in the index (excluded by default — demo pages rank above project KB)",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    exclude_dir_names = () if args.include_wiki else ("wiki",)
     count = build_local_index(
         Path(args.path),
         index_dir=args.index_dir,
         chunk_size=args.chunk_size,
         overlap=args.overlap,
         batch_size=args.batch_size,
+        exclude_dir_names=exclude_dir_names,
     )
+    if exclude_dir_names:
+        print(f"Excluded directory names: {', '.join(exclude_dir_names)} (use --include-wiki to index them)")
     print(f"Indexed {count} chunks into {args.index_dir}")
     print("Now ask with:")
     print('  python ask.py "your question"')

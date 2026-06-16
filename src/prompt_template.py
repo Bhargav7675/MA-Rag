@@ -102,6 +102,86 @@ Question: Are both directors of films The Stoneman Murders and Chandralekha (201
 Steps: ["Who is the director of  film The Stoneman Murders", "Who is the director of film Chandralekha (2014 Film)", "Determine the country of origin for the director of The Stoneman Murders", "Determine the country of origin for the director of Chandralekha (2014 Film)", "Compare the two countries to determine if they are the same"]
 """
 
+planing_project_kb_addon = """
+# MA-RAG project knowledge base
+Answers come from an ingested document corpus about the MA-RAG research prototype (IEEE Talent Meets AI). It includes phases (Phase 0 complete, Phase 1 planned), team roles, architecture, and roadmap facts.
+
+For direct factual questions about MA-RAG status, phases, team, or project facts, use ONE plan step: repeat the user's question verbatim as the only step.
+Use at most 2 steps for simple facts. Reserve multi-step plans for true multi-hop questions only.
+"""
+
+qa_grounded_addon = """
+Answer ONLY from the retrieved documents. If the documents contain the answer, set Success to Yes.
+If the documents do not contain enough information, set Success to No and leave Answer empty.
+"""
+
+qa_slm_output_format_addon = """
+Respond using exactly these labels (one per line):
+Analysis: <brief reasoning>
+Answer: <concise answer from documents only>
+Success: Yes or No
+Rating: <integer 0-10>
+"""
+
+summary_slm_output_format_addon = """
+Respond using exactly these labels:
+Output: Successful or Unsuccessful
+Final answer: <answer for the original question>
+Score: <integer 0-10>
+"""
+
+evidence_curator_system_message = """You assess whether retrieved document chunks are enough to answer a sub-question.
+
+Rules:
+- sufficient: chunks clearly contain enough facts to answer
+- partial: some relevant facts exist but gaps remain
+- insufficient: chunks are empty, unrelated, or say no related information
+
+Set proceed to Yes only for sufficient or partial. List concrete gaps when partial or insufficient.
+"""
+
+evidence_curator_human_message = """Question: {question}
+
+Retrieved chunks:
+{chunks}
+"""
+
+evidence_curator_input_variables = ["question", "chunks"]
+
+evidence_curator_slm_output_format_addon = """
+Respond using exactly these labels:
+Sufficiency: sufficient, partial, or insufficient
+Proceed: Yes or No
+Gaps: <comma-separated gaps, or none>
+Rationale: <brief reason>
+"""
+
+critic_system_message = """You verify a draft answer against step-level evidence from a RAG workflow.
+
+Check faithfulness to step answers, reject hallucinations, and fix the answer if needed.
+If the draft matches the evidence, pass it. If not, provide a corrected answer from evidence only.
+"""
+
+critic_human_message = """Original question: {question}
+
+Draft answer: {draft_answer}
+
+Step evidence:
+{step_evidence}
+
+Chunk ids used: {chunk_ids}
+"""
+
+critic_input_variables = ["question", "draft_answer", "step_evidence", "chunk_ids"]
+
+critic_slm_output_format_addon = """
+Respond using exactly these labels:
+Passed: Yes or No
+Confidence: <integer 0-10>
+Issues: <comma-separated issues, or none>
+Revised answer: <corrected answer from evidence, or repeat draft if passed>
+"""
+
 step_system_message = """
 Given a plan, the current step, and the results from finished steps, decide the task for this step.
 Output the type of task and the query.

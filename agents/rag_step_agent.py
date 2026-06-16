@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List, Optional
 
 from langchain_core.prompts.chat import (
     ChatPromptTemplate,
@@ -10,7 +10,7 @@ from langchain_core.prompts.chat import (
     SystemMessagePromptTemplate,
 )
 
-from agents.rag import build_rag_agent
+from agents.rag import build_rag_agent, run_rag_extract_generate
 from src.contracts.messages import StepAnswer, StepTaskType
 from src.llm import create_chat_llm
 from src.prompt_template import (
@@ -44,6 +44,8 @@ class RagStepAgent:
         plan_step: str,
         task: str,
         task_type: StepTaskType,
+        documents: Optional[List[str]] = None,
+        doc_ids: Optional[List[str]] = None,
     ) -> StepAnswer:
         if task_type == StepTaskType.AGGREGATE:
             return self._run_aggregate(
@@ -52,8 +54,35 @@ class RagStepAgent:
                 plan_step=plan_step,
                 task=task,
             )
+        if documents is not None and doc_ids is not None:
+            return self._run_rag_from_documents(
+                run_id=run_id,
+                step_index=step_index,
+                plan_step=plan_step,
+                task=task,
+                documents=documents,
+                doc_ids=doc_ids,
+            )
         return self._run_rag(
             run_id=run_id,
+            step_index=step_index,
+            plan_step=plan_step,
+            task=task,
+        )
+
+    def _run_rag_from_documents(
+        self,
+        *,
+        run_id: str,
+        step_index: int,
+        plan_step: str,
+        task: str,
+        documents: list[str],
+        doc_ids: list[str],
+    ) -> StepAnswer:
+        out = run_rag_extract_generate(task, documents, doc_ids)
+        return self._step_answer_from_rag_output(
+            out,
             step_index=step_index,
             plan_step=plan_step,
             task=task,
@@ -68,6 +97,21 @@ class RagStepAgent:
         task: str,
     ) -> StepAnswer:
         out = self._rag_graph.invoke({"question": task})
+        return self._step_answer_from_rag_output(
+            out,
+            step_index=step_index,
+            plan_step=plan_step,
+            task=task,
+        )
+
+    @staticmethod
+    def _step_answer_from_rag_output(
+        out: dict,
+        *,
+        step_index: int,
+        plan_step: str,
+        task: str,
+    ) -> StepAnswer:
         raw = out["final_raw_answer"]
         if hasattr(raw, "model_dump"):
             raw = raw.model_dump()

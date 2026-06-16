@@ -185,6 +185,23 @@ class PlanSummaryState(TypedDict):
     answer: str
     score: int
 
+
+class EvidenceReviewFormat(BaseModel):
+    sufficiency: str = Field(
+        description="One of: sufficient, partial, insufficient",
+    )
+    proceed: str = Field(description="Yes or No — continue to generation")
+    gaps: List[str] = Field(default_factory=list, description="Missing evidence topics")
+    rationale: str = Field(default="", description="Brief reason")
+
+
+class VerifyFormat(BaseModel):
+    passed: str = Field(description="Yes or No")
+    confidence: int = Field(description="0-10 confidence in verified answer")
+    issues: List[str] = Field(default_factory=list)
+    revised_answer: str = Field(description="Corrected answer grounded in evidence")
+
+
 class PlanExecState(TypedDict):
     """
     Graph state is a dictionary that contains information we want to propagate to, and modify in, each graph node.

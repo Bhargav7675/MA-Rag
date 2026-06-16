@@ -39,6 +39,7 @@ python ask.py "Your question here"
 - [Architecture](Architecture)
 - [Demo Guide](Demo-Guide)
 - [Roadmap](Roadmap)
+- [SLM Setup](SLM-Setup) — on-prem Ollama
 
 ---
 

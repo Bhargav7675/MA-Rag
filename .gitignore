@@ -3,6 +3,7 @@
 .cursor/
 .env
 local_index/
+data/evidence_ledger/
 .DS_Store
 __pycache__/
 *.pyc

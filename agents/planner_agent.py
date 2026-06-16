@@ -13,8 +13,10 @@ from src.llm import create_chat_llm
 from src.prompt_template import (
     planing_human_message,
     planing_input_variables,
+    planing_project_kb_addon,
     planing_system_message,
 )
+from src.slm_helpers import is_ollama_provider, simplify_plan_for_slm
 from src.utils import PlanFormat
 
 AGENT_ID = "planner"
@@ -35,20 +37,23 @@ class PlannerAgent:
             ]
             memory = "\n".join(parts)
 
+        system_message = planing_system_message + planing_project_kb_addon
         messages = [
-            SystemMessagePromptTemplate.from_template(planing_system_message),
+            SystemMessagePromptTemplate.from_template(system_message),
             HumanMessagePromptTemplate.from_template(planing_human_message),
         ]
         prompt = ChatPromptTemplate(
             input_variables=planing_input_variables,
             messages=messages,
         )
-        llm = create_chat_llm(temperature=0.3)
+        temperature = 0.0 if is_ollama_provider() else 0.3
+        llm = create_chat_llm(temperature=temperature)
         chain = prompt | llm.with_structured_output(PlanFormat)
         output = chain.invoke({"question": request.question, "memory": memory})
+        steps = simplify_plan_for_slm(request.question, output.step)
 
         return PlanResponse(
             run_id=request.run_id,
             analysis=output.analysis,
-            steps=output.step,
+            steps=steps,
         )

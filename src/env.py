@@ -22,6 +22,16 @@ def get_openai_api_key() -> str:
     return key
 
 
+def get_llm_provider() -> str:
+    """LLM backend: openai (cloud API) or ollama (on-prem SLM)."""
+    raw = os.getenv("MA_RAG_LLM_PROVIDER", "openai").strip().lower()
+    if raw not in {"openai", "ollama"}:
+        raise RuntimeError(
+            f"Invalid MA_RAG_LLM_PROVIDER={raw!r}. Use 'openai' or 'ollama'."
+        )
+    return raw
+
+
 def get_model_name() -> str:
     model = os.getenv("MODEL_NAME", "gpt-4o-mini")
     if not model:
@@ -29,8 +39,24 @@ def get_model_name() -> str:
     return model
 
 
+def get_ollama_model() -> str:
+    return os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+
+
+def get_ollama_base_url() -> str:
+    return os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+
+
 def get_data_dir() -> Path:
     raw = os.getenv("MA_RAG_DATA_DIR", str(PROJECT_ROOT / "data"))
+    return Path(raw).expanduser().resolve()
+
+
+def get_evidence_ledger_dir() -> Path:
+    raw = os.getenv(
+        "MA_RAG_EVIDENCE_LEDGER_DIR",
+        str(get_data_dir() / "evidence_ledger"),
+    )
     return Path(raw).expanduser().resolve()
 
 

@@ -1,21 +1,30 @@
-"""In-process workflow runtime (enterprise steps 0 → 1 → 4 → 6)."""
+"""In-process workflow runtime (enterprise steps 0 → 1 → 2 → 4 → 5 → 6)."""
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
+from agents.critic_agent import CriticAgent
+from agents.evidence_curator_agent import EvidenceCuratorAgent
 from agents.planner_agent import PlannerAgent
 from agents.rag_step_agent import RagStepAgent
+from agents.retrieval_agent import RetrievalAgent
 from agents.step_definer_agent import StepDefinerAgent
 from agents.summarizer_agent import SummarizerAgent
 from src.contracts.messages import (
+    EvidenceReviewRequest,
     FinalAnswerPackage,
     PlanRequest,
+    RetrievalTask,
+    StepAnswer,
     StepDefineRequest,
+    StepTaskType,
     SummarizeRequest,
     UserRequest,
+    VerifyRequest,
     WorkflowStep,
 )
+from src.evidence_ledger import EvidenceLedger
 from src.pipeline import normalize_question
 
 
@@ -23,15 +32,19 @@ class WorkflowEngine:
     """
     Orchestrates typed agents without LangGraph shared state.
 
-    Steps: INIT_PLAN → (per plan step: define → RAG) → FINALIZE
+    Steps: INIT_PLAN → (per plan step: RETRIEVE → EVIDENCE_CHECK → GENERATE)
+           → FINALIZE draft → VERIFY → FINALIZE
     """
 
     def __init__(self, retriever_tool: Any):
         self.retriever_tool = retriever_tool
         self.planner = PlannerAgent()
+        self.retrieval = RetrievalAgent(retriever_tool)
+        self.evidence_curator = EvidenceCuratorAgent()
         self.step_definer = StepDefinerAgent()
         self.rag_step = RagStepAgent(retriever_tool)
         self.summarizer = SummarizerAgent()
+        self.critic = CriticAgent()
 
     def run(self, question: str, *, run_id: Optional[str] = None) -> FinalAnswerPackage:
         question = normalize_question(question)
@@ -39,12 +52,18 @@ class WorkflowEngine:
         if run_id:
             user.run_id = run_id
 
+        ledger = EvidenceLedger(user.run_id)
         trace: list[WorkflowStep] = [WorkflowStep.INIT_PLAN]
         plan_res = self.planner.run(
             PlanRequest(run_id=user.run_id, question=user.question)
         )
+        ledger.append(
+            agent="planner",
+            workflow_step=WorkflowStep.INIT_PLAN.value,
+            payload={"steps": plan_res.steps, "analysis": plan_res.analysis},
+        )
 
-        step_answers = []
+        step_answers: list[StepAnswer] = []
         chunk_ids: list[str] = []
         stop_early = False
 
@@ -52,48 +71,231 @@ class WorkflowEngine:
             if stop_early:
                 break
 
-            trace.append(WorkflowStep.RETRIEVE)
-            define_res = self.step_definer.run(
-                StepDefineRequest(
+            if len(plan_res.steps) == 1:
+                task = user.question
+                task_type = StepTaskType.QUESTION_ANSWERING
+            else:
+                define_res = self.step_definer.run(
+                    StepDefineRequest(
+                        run_id=user.run_id,
+                        plan_steps=plan_res.steps,
+                        current_step_index=step_index,
+                        prior_step_answers=step_answers,
+                    )
+                )
+                task = define_res.task
+                task_type = define_res.task_type
+
+            if task_type == StepTaskType.AGGREGATE and not step_answers:
+                task_type = StepTaskType.QUESTION_ANSWERING
+                task = task or plan_step
+
+            if task_type == StepTaskType.AGGREGATE:
+                trace.append(WorkflowStep.GENERATE)
+                answer = self.rag_step.run(
                     run_id=user.run_id,
-                    plan_steps=plan_res.steps,
-                    current_step_index=step_index,
-                    prior_step_answers=step_answers,
+                    step_index=step_index,
+                    plan_step=plan_step,
+                    task=task,
+                    task_type=task_type,
+                )
+                step_answers.append(answer)
+                ledger.append(
+                    agent="rag_step",
+                    workflow_step=WorkflowStep.GENERATE.value,
+                    payload={
+                        "step_index": step_index,
+                        "task": task,
+                        "task_type": task_type.value,
+                        "answer": answer.answer,
+                        "success": answer.success,
+                    },
+                )
+                if not answer.success and len(plan_res.steps) > 1:
+                    stop_early = True
+                continue
+
+            trace.append(WorkflowStep.RETRIEVE)
+            retrieval = self.retrieval.run(
+                RetrievalTask(
+                    run_id=user.run_id,
+                    step_index=step_index,
+                    question=task,
                 )
             )
+            chunk_ids.extend(chunk.doc_id for chunk in retrieval.chunks)
+            ledger.append(
+                agent="retrieval",
+                workflow_step=WorkflowStep.RETRIEVE.value,
+                payload={
+                    "step_index": step_index,
+                    "question": task,
+                    "chunk_ids": [chunk.doc_id for chunk in retrieval.chunks],
+                },
+            )
+
+            trace.append(WorkflowStep.EVIDENCE_CHECK)
+            evidence = self.evidence_curator.run(
+                EvidenceReviewRequest(
+                    run_id=user.run_id,
+                    step_index=step_index,
+                    question=task,
+                    chunks=retrieval.chunks,
+                )
+            )
+            ledger.append(
+                agent="evidence_curator",
+                workflow_step=WorkflowStep.EVIDENCE_CHECK.value,
+                payload={
+                    "step_index": step_index,
+                    "sufficiency": evidence.sufficiency.value,
+                    "proceed": evidence.proceed,
+                    "gaps": evidence.gaps,
+                    "rationale": evidence.rationale,
+                },
+            )
+
+            if not evidence.proceed:
+                step_answers.append(
+                    StepAnswer(
+                        step_index=step_index,
+                        plan_step=plan_step,
+                        task=task,
+                        analysis=evidence.rationale,
+                        answer="",
+                        success=False,
+                        confidence=0,
+                        doc_ids=[chunk.doc_id for chunk in retrieval.chunks],
+                    )
+                )
+                if len(plan_res.steps) > 1:
+                    stop_early = True
+                continue
+
+            trace.append(WorkflowStep.CONTEXT_BUILD)
             trace.append(WorkflowStep.GENERATE)
             answer = self.rag_step.run(
                 run_id=user.run_id,
                 step_index=step_index,
                 plan_step=plan_step,
-                task=define_res.task,
-                task_type=define_res.task_type,
+                task=task,
+                task_type=task_type,
+                documents=[chunk.text for chunk in retrieval.chunks],
+                doc_ids=[chunk.doc_id for chunk in retrieval.chunks],
             )
             step_answers.append(answer)
-            chunk_ids.extend(answer.doc_ids)
+            ledger.append(
+                agent="rag_step",
+                workflow_step=WorkflowStep.GENERATE.value,
+                payload={
+                    "step_index": step_index,
+                    "task": task,
+                    "answer": answer.answer,
+                    "success": answer.success,
+                    "confidence": answer.confidence,
+                },
+            )
 
-            if not answer.success:
+            if not answer.success and len(plan_res.steps) > 1:
                 stop_early = True
 
         trace.append(WorkflowStep.FINALIZE)
-        summary = self.summarizer.run(
-            SummarizeRequest(
-                run_id=user.run_id,
-                question=user.question,
-                plan_steps=plan_res.steps,
-                step_answers=step_answers,
-            )
+        single_success = (
+            len(plan_res.steps) == 1
+            and len(step_answers) == 1
+            and step_answers[0].success
+            and step_answers[0].answer.strip()
         )
+
+        if single_success:
+            # Avoid SLM summarize/critic overwriting a correct grounded step answer
+            # (e.g. confusing "completed Phase 0" with "next Phase 1" in context).
+            step = step_answers[0]
+            final_answer = step.answer
+            final_confidence = step.confidence
+            verify_passed = True
+            verify_issues: list[str] = []
+            ledger.append(
+                agent="summarizer",
+                workflow_step=WorkflowStep.FINALIZE.value,
+                payload={
+                    "draft_answer": final_answer,
+                    "confidence": final_confidence,
+                    "mode": "single_step_pass_through",
+                },
+            )
+            trace.append(WorkflowStep.VERIFY)
+            ledger.append(
+                agent="critic",
+                workflow_step=WorkflowStep.VERIFY.value,
+                payload={
+                    "passed": True,
+                    "confidence": final_confidence,
+                    "issues": [],
+                    "revised_answer": final_answer,
+                    "mode": "single_step_pass_through",
+                },
+            )
+        else:
+            summary = self.summarizer.run(
+                SummarizeRequest(
+                    run_id=user.run_id,
+                    question=user.question,
+                    plan_steps=plan_res.steps,
+                    step_answers=step_answers,
+                )
+            )
+            ledger.append(
+                agent="summarizer",
+                workflow_step=WorkflowStep.FINALIZE.value,
+                payload={
+                    "draft_answer": summary.answer,
+                    "confidence": summary.confidence,
+                },
+            )
+
+            trace.append(WorkflowStep.VERIFY)
+            verify = self.critic.run(
+                VerifyRequest(
+                    run_id=user.run_id,
+                    question=user.question,
+                    draft_answer=summary.answer,
+                    step_answers=step_answers,
+                    chunk_ids=list(dict.fromkeys(chunk_ids)),
+                )
+            )
+            ledger.append(
+                agent="critic",
+                workflow_step=WorkflowStep.VERIFY.value,
+                payload={
+                    "passed": verify.passed,
+                    "confidence": verify.confidence,
+                    "issues": verify.issues,
+                    "revised_answer": verify.revised_answer,
+                },
+            )
+
+            final_answer = verify.revised_answer or summary.answer
+            final_confidence = (
+                verify.confidence
+                if verify.passed
+                else min(summary.confidence, verify.confidence)
+            )
+            verify_passed = verify.passed
+            verify_issues = verify.issues
 
         return FinalAnswerPackage(
             run_id=user.run_id,
             question=user.question,
-            answer=summary.answer,
-            confidence=summary.confidence,
+            answer=final_answer,
+            confidence=final_confidence,
             plan_steps=plan_res.steps,
             step_answers=step_answers,
             workflow_trace=trace,
             chunk_ids_used=list(dict.fromkeys(chunk_ids)),
+            verify_passed=verify_passed,
+            verify_issues=verify_issues,
+            evidence_ledger_path=str(ledger.path),
         )
 
 
@@ -114,6 +316,12 @@ def format_workflow_output(package: FinalAnswerPackage) -> str:
     lines.append("\n=== Final answer ===")
     lines.append(package.answer)
     lines.append(f"Confidence score: {package.confidence}")
+    if package.verify_passed is not None:
+        lines.append(f"Verify passed: {'Yes' if package.verify_passed else 'No'}")
+    if package.verify_issues:
+        lines.append(f"Verify issues: {', '.join(package.verify_issues)}")
     lines.append(f"\nRun id: {package.run_id}")
+    if package.evidence_ledger_path:
+        lines.append(f"Evidence ledger: {package.evidence_ledger_path}")
     lines.append(f"Trace: {', '.join(s.value for s in package.workflow_trace)}")
     return "\n".join(lines)
