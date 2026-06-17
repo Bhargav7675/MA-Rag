@@ -88,6 +88,14 @@ def get_evidence_ledger_dir() -> Path:
     return Path(raw).expanduser().resolve()
 
 
+def get_a2a_journal_dir() -> Path:
+    raw = os.getenv(
+        "MA_RAG_A2A_JOURNAL_DIR",
+        str(get_data_dir() / "a2a_journal"),
+    )
+    return Path(raw).expanduser().resolve()
+
+
 def get_index_dir() -> Path:
     raw = os.getenv("MA_RAG_INDEX_DIR", str(PROJECT_ROOT / "save_embs" / "gte-ml-base"))
     return Path(raw).expanduser().resolve()

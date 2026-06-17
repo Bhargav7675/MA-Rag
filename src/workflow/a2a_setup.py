@@ -2,26 +2,44 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from agents.critic_agent import CriticAgent
 from agents.evidence_curator_agent import EvidenceCuratorAgent
 from agents.planner_agent import PlannerAgent
+from agents.rag_step_agent import RagStepAgent
 from agents.retrieval_agent import RetrievalAgent
 from agents.router_agent import RouterAgent
 from agents.step_definer_agent import StepDefinerAgent
 from agents.summarizer_agent import SummarizerAgent
 from src.a2a.bus import InProcessA2ABus
+from src.a2a.file_journal import A2AFileJournal
 from src.a2a.registry import AgentDescriptor
 from src.contracts.messages import (
     EvidenceReviewRequest,
     PlanRequest,
+    RagStepRequest,
     RetrievalTask,
     RouterRequest,
     StepDefineRequest,
     SummarizeRequest,
     VerifyRequest,
 )
+
+
+def _run_rag_step(rag_step: RagStepAgent, payload: dict[str, Any]) -> dict[str, Any]:
+    request = RagStepRequest(**payload)
+    kwargs = {
+        "run_id": request.run_id,
+        "step_index": request.step_index,
+        "plan_step": request.plan_step,
+        "task": request.task,
+        "task_type": request.task_type,
+    }
+    if request.documents is not None and request.doc_ids is not None:
+        kwargs["documents"] = request.documents
+        kwargs["doc_ids"] = request.doc_ids
+    return rag_step.run(**kwargs).model_dump()
 
 
 def setup_a2a_bus(
@@ -31,10 +49,12 @@ def setup_a2a_bus(
     retrieval: RetrievalAgent,
     evidence_curator: EvidenceCuratorAgent,
     step_definer: StepDefinerAgent,
+    rag_step: RagStepAgent,
     summarizer: SummarizerAgent,
     critic: CriticAgent,
+    journal: Optional[A2AFileJournal] = None,
 ) -> InProcessA2ABus:
-    bus = InProcessA2ABus()
+    bus = InProcessA2ABus(journal=journal)
 
     bus.register_agent(
         AgentDescriptor(
@@ -76,6 +96,15 @@ def setup_a2a_bus(
             message_types=["step.define"],
         ),
         lambda payload: step_definer.run(StepDefineRequest(**payload)).model_dump(),
+    )
+    bus.register_agent(
+        AgentDescriptor(
+            agent_id="rag_step",
+            role=rag_step.role,
+            message_types=["rag.step"],
+            description="Grounded extract + QA for one workflow step",
+        ),
+        lambda payload: _run_rag_step(rag_step, payload),
     )
     bus.register_agent(
         AgentDescriptor(

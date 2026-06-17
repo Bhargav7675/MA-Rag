@@ -16,7 +16,7 @@ from src.prompt_template import (
     planing_project_kb_addon,
     planing_system_message,
 )
-from src.slm_helpers import canonical_kb_plan, simplify_plan_for_slm
+from src.slm_helpers import canonical_kb_plan, heuristic_multi_hop_plan, simplify_plan_for_slm
 from src.utils import PlanFormat
 
 AGENT_ID = "planner"
@@ -52,6 +52,7 @@ class PlannerAgent:
         output = chain.invoke({"question": request.question, "memory": memory})
 
         canonical = canonical_kb_plan(request.question)
+        heuristic = heuristic_multi_hop_plan(request.question)
         if canonical:
             steps = canonical
         elif request.route_decision == RouteDecision.SIMPLE_RAG:
@@ -61,11 +62,13 @@ class PlannerAgent:
             steps = [q]
         elif request.route_decision == RouteDecision.MULTI_HOP_RAG:
             steps = output.step
-            if is_agent_ollama("planner") and len(steps) > 3:
+            if heuristic and (len(steps) != 2 or len(steps) > 3):
+                steps = heuristic
+            elif is_agent_ollama("planner") and len(steps) > 3:
                 q = request.question.strip()
                 if not q.endswith("?"):
                     q = f"{q}?"
-                steps = [q]
+                steps = heuristic or [q]
         else:
             steps = simplify_plan_for_slm(request.question, output.step)
 

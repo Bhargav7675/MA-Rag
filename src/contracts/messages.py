@@ -157,6 +157,19 @@ class RetrievalResponse(BaseModel):
     chunks: list[RetrievedChunk]
 
 
+# --- RAG step ---
+
+
+class RagStepRequest(BaseModel):
+    run_id: str
+    step_index: int
+    plan_step: str
+    task: str
+    task_type: StepTaskType
+    documents: Optional[list[str]] = None
+    doc_ids: Optional[list[str]] = None
+
+
 # --- Evidence curator (Track C) ---
 
 
@@ -227,4 +240,5 @@ class FinalAnswerPackage(BaseModel):
     verify_passed: Optional[bool] = None
     verify_issues: list[str] = Field(default_factory=list)
     evidence_ledger_path: Optional[str] = None
+    a2a_journal_path: Optional[str] = None
     route_decision: Optional[RouteDecision] = None

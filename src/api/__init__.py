@@ -1,5 +1,7 @@
 """HTTP API package for MA-RAG."""
 
-from src.api.app import app
+from src.api.server import fastapi_app
 
-__all__ = ["app"]
+app = fastapi_app
+
+__all__ = ["app", "fastapi_app"]

@@ -93,7 +93,7 @@ route → init_plan → retrieve → evidence_check → context_build → genera
 ### Router heuristics (`src/slm_helpers.py`)
 
 - `classify_route()` → `simple_rag` | `multi_hop_rag`
-- `canonical_kb_plan()` — known 2-step pattern for volunteer + Oracle title question
+- `canonical_kb_plan()` + `heuristic_multi_hop_plan()` for SLM planner fallback
 - `is_likely_multi_hop()` — detects `" and "`, `"both"`, etc.
 
 ---
@@ -129,6 +129,9 @@ python ask.py "What is the current completed phase of the MA-RAG prototype?" --a
 
 # Regression (expect 8/8)
 python eval_kb.py
+
+# API tests
+python -m pytest tests/ -v
 
 # API ingress
 python run_api.py
@@ -195,7 +198,7 @@ ingest.py                       # FAISS index build
 eval_kb.py                      # KB regression harness
 src/tools/                      # MCP-style tool gateway (faiss_retrieve)
 src/a2a/                        # In-process A2A bus + agent registry
-src/api/app.py                  # FastAPI routes
+src/api/server.py               # FastAPI routes
 src/workflow/a2a_setup.py       # Wire agents onto A2A bus
 src/workflow/service.py         # Shared workflow service (CLI + API)
 agents/router_agent.py
@@ -241,7 +244,11 @@ docs/wiki/Roadmap.md
 5. ~~A2A scaffolding~~ **Done** — `src/a2a/` in-process bus
 6. ~~FastAPI `POST /ask`~~ **Done** — `run_api.py`
 7. **Push branch** — when user requests
-8. **Remote A2A / full MCP server** — future
+8. ~~API tests + warning cleanup~~ **Done**
+9. ~~A2A file journal + rag_step on bus~~ **Done**
+10. ~~Heuristic multi-hop + evidence re-retrieve~~ **Done**
+11. **Remote A2A worker process** — tail journal, dispatch handlers
+12. **Full MCP server** (stdio/SSE) — future
 
 ---
 

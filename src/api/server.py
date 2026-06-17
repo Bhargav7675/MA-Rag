@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from src.runtime_warnings import configure_runtime_warnings
+
+configure_runtime_warnings()
+
 from typing import Any
 
 from dotenv import load_dotenv
@@ -17,14 +21,14 @@ from src.workflow.service import get_workflow_service
 
 load_dotenv()
 
-app = FastAPI(
+fastapi_app = FastAPI(
     title="MA-RAG API",
     description="Minimal ingress for the agentic MA-RAG workflow (Plane 1 scaffolding).",
     version="0.1.0",
 )
 
 
-@app.get("/health", response_model=HealthResponse)
+@fastapi_app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
@@ -33,7 +37,7 @@ def health() -> HealthResponse:
     )
 
 
-@app.post("/ask", response_model=AskResponse)
+@fastapi_app.post("/ask", response_model=AskResponse)
 def ask(request: AskRequest) -> AskResponse:
     if not local_index_exists():
         raise HTTPException(
@@ -54,7 +58,7 @@ def ask(request: AskRequest) -> AskResponse:
     return AskResponse.from_package(package)
 
 
-@app.post("/ask/full", response_model=FinalAnswerPackage)
+@fastapi_app.post("/ask/full", response_model=FinalAnswerPackage)
 def ask_full(request: AskRequest) -> FinalAnswerPackage:
     if not local_index_exists():
         raise HTTPException(
@@ -69,7 +73,7 @@ def ask_full(request: AskRequest) -> FinalAnswerPackage:
     )
 
 
-@app.get("/tools")
+@fastapi_app.get("/tools")
 def list_tools() -> list[dict[str, Any]]:
     try:
         service = get_workflow_service()
@@ -78,7 +82,7 @@ def list_tools() -> list[dict[str, Any]]:
     return [tool.model_dump() for tool in service.engine.tool_registry.list_tools()]
 
 
-@app.post("/tools/{tool_name}/invoke")
+@fastapi_app.post("/tools/{tool_name}/invoke")
 def invoke_tool(tool_name: str, request: ToolInvokeRequest) -> dict[str, Any]:
     service = get_workflow_service()
     result = service.engine.tool_registry.invoke(
@@ -94,7 +98,7 @@ def invoke_tool(tool_name: str, request: ToolInvokeRequest) -> dict[str, Any]:
     return result.model_dump()
 
 
-@app.get("/agents")
+@fastapi_app.get("/agents")
 def list_agents() -> list[dict[str, Any]]:
     try:
         service = get_workflow_service()
@@ -110,7 +114,7 @@ def main() -> None:
     import uvicorn
 
     uvicorn.run(
-        "src.api.app:app",
+        "src.api.server:fastapi_app",
         host=get_api_host(),
         port=get_api_port(),
         reload=False,

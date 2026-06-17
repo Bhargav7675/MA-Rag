@@ -45,9 +45,38 @@ def canonical_kb_plan(question: str) -> List[str]:
     return []
 
 
+def heuristic_multi_hop_plan(question: str) -> List[str]:
+    """
+    Split compound questions on connectors (e.g. 'and') into ordered sub-questions.
+    Used when the SLM planner over/under-shoots step count for multi-hop routes.
+    """
+    canonical = canonical_kb_plan(question)
+    if canonical:
+        return canonical
+    if not is_likely_multi_hop(question):
+        return []
+
+    q = question.strip()
+    if not q.endswith("?"):
+        q = f"{q}?"
+
+    parts = re.split(r"\s+and\s+", q, maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) != 2:
+        return []
+
+    left, right = parts[0].strip(), parts[1].strip()
+    if len(left) < 12 or len(right) < 12:
+        return []
+    if not left.endswith("?"):
+        left = f"{left}?"
+    if not right.endswith("?"):
+        right = f"{right}?"
+    return [left, right]
+
+
 def classify_route(question: str) -> Tuple[RouteDecision, str]:
     """Heuristic triage: simple KB lookup vs multi-hop planning."""
-    if canonical_kb_plan(question):
+    if heuristic_multi_hop_plan(question):
         return (
             RouteDecision.MULTI_HOP_RAG,
             "Known MA-RAG knowledge-base multi-hop pattern.",

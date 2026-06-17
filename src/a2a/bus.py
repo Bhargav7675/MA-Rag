@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from src.a2a.envelope import A2AEnvelope, A2AResponse, new_message_id
 from src.a2a.registry import AgentDescriptor, AgentRegistry
+
+if TYPE_CHECKING:
+    from src.a2a.file_journal import A2AFileJournal
 
 
 class InProcessA2ABus:
@@ -16,8 +19,14 @@ class InProcessA2ABus:
     without changing envelope shape or agent contracts.
     """
 
-    def __init__(self, registry: Optional[AgentRegistry] = None):
+    def __init__(
+        self,
+        registry: Optional[AgentRegistry] = None,
+        *,
+        journal: Optional["A2AFileJournal"] = None,
+    ):
         self.registry = registry or AgentRegistry()
+        self.journal = journal
         self._history: list[A2AEnvelope | A2AResponse] = []
         self._max_history = 500
 
@@ -83,3 +92,7 @@ class InProcessA2ABus:
         self._history.append(item)
         if len(self._history) > self._max_history:
             self._history = self._history[-self._max_history :]
+        if self.journal is not None:
+            correlation_id = item.correlation_id
+            record = item.model_dump() if hasattr(item, "model_dump") else dict(item)
+            self.journal.append(correlation_id, record)

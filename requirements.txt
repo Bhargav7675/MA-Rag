@@ -16,6 +16,7 @@ numpy>=1.26.0,<2.1
 openai>=1.100.2
 pandas>=2.2.0
 pydantic>=2.11.7,<3
+pytest>=8.0.0,<9
 pypdf>=5.0.0
 python-dotenv>=1.0.0
 fastapi>=0.115.0,<1

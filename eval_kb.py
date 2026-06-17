@@ -6,11 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import warnings
 
-warnings.filterwarnings("ignore", message=".*urllib3 v2 only supports OpenSSL.*")
-warnings.filterwarnings("ignore", message=".*allowed_objects.*")
-warnings.filterwarnings("ignore", category=UserWarning, module=r"pydantic\.main")
+from src.runtime_warnings import configure_runtime_warnings
+
+configure_runtime_warnings()
 
 from dotenv import load_dotenv
 

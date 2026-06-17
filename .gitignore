@@ -4,6 +4,7 @@
 .env
 local_index/
 data/evidence_ledger/
+data/a2a_journal/
 .DS_Store
 __pycache__/
 *.pyc

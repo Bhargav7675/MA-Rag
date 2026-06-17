@@ -27,6 +27,7 @@ class AskResponse(BaseModel):
     workflow_trace: list[str] = Field(default_factory=list)
     chunk_ids_used: list[str] = Field(default_factory=list)
     evidence_ledger_path: Optional[str] = None
+    a2a_journal_path: Optional[str] = None
 
     @classmethod
     def from_package(cls, package: FinalAnswerPackage) -> "AskResponse":
@@ -42,6 +43,7 @@ class AskResponse(BaseModel):
             workflow_trace=[step.value for step in package.workflow_trace],
             chunk_ids_used=package.chunk_ids_used,
             evidence_ledger_path=package.evidence_ledger_path,
+            a2a_journal_path=package.a2a_journal_path,
         )
 
 

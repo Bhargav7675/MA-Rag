@@ -12,12 +12,14 @@ from agents.retrieval_agent import RetrievalAgent
 from agents.router_agent import RouterAgent
 from agents.step_definer_agent import StepDefinerAgent
 from agents.summarizer_agent import SummarizerAgent
+from src.a2a.file_journal import A2AFileJournal
 from src.contracts.messages import (
     EvidenceReviewRequest,
     EvidenceReviewResponse,
     FinalAnswerPackage,
     PlanRequest,
     PlanResponse,
+    RagStepRequest,
     RetrievalResponse,
     RetrievalTask,
     RouterRequest,
@@ -71,14 +73,17 @@ class WorkflowEngine:
         self.rag_step = RagStepAgent(retriever_tool)
         self.summarizer = SummarizerAgent()
         self.critic = CriticAgent()
+        self.a2a_journal = A2AFileJournal() if use_a2a else None
         self.a2a_bus = setup_a2a_bus(
             router=self.router,
             planner=self.planner,
             retrieval=self.retrieval,
             evidence_curator=self.evidence_curator,
             step_definer=self.step_definer,
+            rag_step=self.rag_step,
             summarizer=self.summarizer,
             critic=self.critic,
+            journal=self.a2a_journal,
         ) if use_a2a else None
 
     def _dispatch_router(self, request: RouterRequest) -> RouterResponse:
@@ -169,6 +174,28 @@ class WorkflowEngine:
             return VerifyResponse(**data)
         return self.critic.run(request)
 
+    def _dispatch_rag_step(self, request: RagStepRequest) -> StepAnswer:
+        if self.use_a2a and self.a2a_bus:
+            data = a2a_request(
+                self.a2a_bus,
+                to_agent="rag_step",
+                message_type="rag.step",
+                payload=request.model_dump(mode="json"),
+                correlation_id=request.run_id,
+            )
+            return StepAnswer(**data)
+        kwargs = {
+            "run_id": request.run_id,
+            "step_index": request.step_index,
+            "plan_step": request.plan_step,
+            "task": request.task,
+            "task_type": request.task_type,
+        }
+        if request.documents is not None and request.doc_ids is not None:
+            kwargs["documents"] = request.documents
+            kwargs["doc_ids"] = request.doc_ids
+        return self.rag_step.run(**kwargs)
+
     def run(self, question: str, *, run_id: Optional[str] = None) -> FinalAnswerPackage:
         question = normalize_question(question)
         user = UserRequest(question=question)
@@ -232,12 +259,14 @@ class WorkflowEngine:
 
             if task_type == StepTaskType.AGGREGATE:
                 trace.append(WorkflowStep.GENERATE)
-                answer = self.rag_step.run(
-                    run_id=user.run_id,
-                    step_index=step_index,
-                    plan_step=plan_step,
-                    task=task,
-                    task_type=task_type,
+                answer = self._dispatch_rag_step(
+                    RagStepRequest(
+                        run_id=user.run_id,
+                        step_index=step_index,
+                        plan_step=plan_step,
+                        task=task,
+                        task_type=task_type,
+                    )
                 )
                 step_answers.append(answer)
                 ledger.append(
@@ -295,6 +324,51 @@ class WorkflowEngine:
                 },
             )
 
+            if not evidence.proceed and evidence.gaps:
+                retry_task = f"{task} {' '.join(evidence.gaps)}".strip()
+                if retry_task != task:
+                    trace.append(WorkflowStep.RETRIEVE)
+                    retrieval = self._dispatch_retrieval(
+                        RetrievalTask(
+                            run_id=user.run_id,
+                            step_index=step_index,
+                            question=retry_task,
+                        )
+                    )
+                    chunk_ids.extend(chunk.doc_id for chunk in retrieval.chunks)
+                    ledger.append(
+                        agent="retrieval",
+                        workflow_step=WorkflowStep.RETRIEVE.value,
+                        payload={
+                            "step_index": step_index,
+                            "question": retry_task,
+                            "chunk_ids": [chunk.doc_id for chunk in retrieval.chunks],
+                            "mode": "evidence_retry",
+                        },
+                    )
+                    trace.append(WorkflowStep.EVIDENCE_CHECK)
+                    evidence = self._dispatch_evidence(
+                        EvidenceReviewRequest(
+                            run_id=user.run_id,
+                            step_index=step_index,
+                            question=retry_task,
+                            chunks=retrieval.chunks,
+                        )
+                    )
+                    ledger.append(
+                        agent="evidence_curator",
+                        workflow_step=WorkflowStep.EVIDENCE_CHECK.value,
+                        payload={
+                            "step_index": step_index,
+                            "sufficiency": evidence.sufficiency.value,
+                            "proceed": evidence.proceed,
+                            "gaps": evidence.gaps,
+                            "rationale": evidence.rationale,
+                            "mode": "evidence_retry",
+                        },
+                    )
+                    task = retry_task
+
             if not evidence.proceed:
                 step_answers.append(
                     StepAnswer(
@@ -314,14 +388,16 @@ class WorkflowEngine:
 
             trace.append(WorkflowStep.CONTEXT_BUILD)
             trace.append(WorkflowStep.GENERATE)
-            answer = self.rag_step.run(
-                run_id=user.run_id,
-                step_index=step_index,
-                plan_step=plan_step,
-                task=task,
-                task_type=task_type,
-                documents=[chunk.text for chunk in retrieval.chunks],
-                doc_ids=[chunk.doc_id for chunk in retrieval.chunks],
+            answer = self._dispatch_rag_step(
+                RagStepRequest(
+                    run_id=user.run_id,
+                    step_index=step_index,
+                    plan_step=plan_step,
+                    task=task,
+                    task_type=task_type,
+                    documents=[chunk.text for chunk in retrieval.chunks],
+                    doc_ids=[chunk.doc_id for chunk in retrieval.chunks],
+                )
             )
             step_answers.append(answer)
             ledger.append(
@@ -525,6 +601,11 @@ class WorkflowEngine:
             verify_passed=verify_passed,
             verify_issues=verify_issues,
             evidence_ledger_path=str(ledger.path),
+            a2a_journal_path=(
+                str(self.a2a_journal.path_for(user.run_id))
+                if self.a2a_journal is not None
+                else None
+            ),
             route_decision=route_res.decision,
         )
 
@@ -555,5 +636,7 @@ def format_workflow_output(package: FinalAnswerPackage) -> str:
     lines.append(f"\nRun id: {package.run_id}")
     if package.evidence_ledger_path:
         lines.append(f"Evidence ledger: {package.evidence_ledger_path}")
+    if package.a2a_journal_path:
+        lines.append(f"A2A journal: {package.a2a_journal_path}")
     lines.append(f"Trace: {', '.join(s.value for s in package.workflow_trace)}")
     return "\n".join(lines)
