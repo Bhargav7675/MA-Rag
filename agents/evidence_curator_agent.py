@@ -15,14 +15,14 @@ from src.contracts.messages import (
     EvidenceSufficiency,
     RetrievedChunk,
 )
-from src.llm import create_chat_llm
+from src.llm import create_chat_llm, is_agent_ollama
 from src.prompt_template import (
     evidence_curator_human_message,
     evidence_curator_input_variables,
     evidence_curator_slm_output_format_addon,
     evidence_curator_system_message,
 )
-from src.slm_helpers import is_ollama_provider, parse_evidence_review_response
+from src.slm_helpers import parse_evidence_review_response
 from src.utils import EvidenceReviewFormat
 
 AGENT_ID = "evidence_curator"
@@ -54,7 +54,7 @@ class EvidenceCuratorAgent:
 
         chunks_text = self._format_chunks(request.chunks)
         system_message = evidence_curator_system_message
-        if is_ollama_provider():
+        if is_agent_ollama("evidence_curator"):
             system_message += evidence_curator_slm_output_format_addon
         messages = [
             SystemMessagePromptTemplate.from_template(system_message),
@@ -64,10 +64,10 @@ class EvidenceCuratorAgent:
             input_variables=evidence_curator_input_variables,
             messages=messages,
         )
-        llm = create_chat_llm(temperature=0.0)
+        llm = create_chat_llm(agent_id="evidence_curator", temperature=0.0)
         inputs = {"question": request.question, "chunks": chunks_text}
 
-        if is_ollama_provider():
+        if is_agent_ollama("evidence_curator"):
             text = (prompt | llm | StrOutputParser()).invoke(inputs)
             parsed = parse_evidence_review_response(text)
         else:

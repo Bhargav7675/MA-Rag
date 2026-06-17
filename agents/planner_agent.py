@@ -9,14 +9,14 @@ from langchain_core.prompts.chat import (
 )
 
 from src.contracts.messages import PlanRequest, PlanResponse, RouteDecision
-from src.llm import create_chat_llm
+from src.llm import create_chat_llm, is_agent_ollama
 from src.prompt_template import (
     planing_human_message,
     planing_input_variables,
     planing_project_kb_addon,
     planing_system_message,
 )
-from src.slm_helpers import canonical_kb_plan, is_ollama_provider, simplify_plan_for_slm
+from src.slm_helpers import canonical_kb_plan, simplify_plan_for_slm
 from src.utils import PlanFormat
 
 AGENT_ID = "planner"
@@ -46,8 +46,8 @@ class PlannerAgent:
             input_variables=planing_input_variables,
             messages=messages,
         )
-        temperature = 0.0 if is_ollama_provider() else 0.3
-        llm = create_chat_llm(temperature=temperature)
+        temperature = 0.0 if is_agent_ollama("planner") else 0.3
+        llm = create_chat_llm(agent_id="planner", temperature=temperature)
         chain = prompt | llm.with_structured_output(PlanFormat)
         output = chain.invoke({"question": request.question, "memory": memory})
 
@@ -61,7 +61,7 @@ class PlannerAgent:
             steps = [q]
         elif request.route_decision == RouteDecision.MULTI_HOP_RAG:
             steps = output.step
-            if is_ollama_provider() and len(steps) > 3:
+            if is_agent_ollama("planner") and len(steps) > 3:
                 q = request.question.strip()
                 if not q.endswith("?"):
                     q = f"{q}?"

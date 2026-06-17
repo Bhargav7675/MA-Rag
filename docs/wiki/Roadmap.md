@@ -19,7 +19,7 @@
 
 ## Next
 
-- Router agent (simple vs multi-hop triage) — done
-- Per-agent model config (hybrid SLM + cloud planner optional)
+- Remote A2A transport + full MCP server process
+- OCI deployment mapping
 - A2A services + MCP tool gateway (later)
 - API ingress (later)

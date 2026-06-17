@@ -15,13 +15,12 @@ from src.contracts.messages import (
     StepDefineResponse,
     StepTaskType,
 )
-from src.llm import create_chat_llm
+from src.llm import create_chat_llm, is_agent_ollama
 from src.prompt_template import (
     step_human_message,
     step_input_variables,
     step_system_message,
 )
-from src.slm_helpers import is_ollama_provider
 from src.utils import StepTaskFormat
 
 AGENT_ID = "step_definer"
@@ -95,7 +94,10 @@ class StepDefinerAgent:
             input_variables=step_input_variables,
             messages=messages,
         )
-        llm = create_chat_llm(temperature=0.0 if is_ollama_provider() else 0.3)
+        llm = create_chat_llm(
+            agent_id="step_definer",
+            temperature=0.0 if is_agent_ollama("step_definer") else 0.3,
+        )
         chain = prompt | llm.with_structured_output(StepTaskFormat)
         out = chain.invoke({"plan": plan, "cur_step": cur_step, "memory": memory})
 

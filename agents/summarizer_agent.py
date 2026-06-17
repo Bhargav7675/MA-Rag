@@ -11,7 +11,7 @@ from langchain_core.prompts.chat import (
 from src.contracts.messages import SummarizeRequest, SummarizeResponse
 from langchain_core.output_parsers import StrOutputParser
 
-from src.llm import create_chat_llm
+from src.llm import create_chat_llm, is_agent_ollama
 from src.prompt_template import (
     summary_human_message,
     summary_input_variables,
@@ -19,7 +19,7 @@ from src.prompt_template import (
     summary_slm_output_format_addon,
     summary_system_message,
 )
-from src.slm_helpers import is_ollama_provider, parse_summary_response
+from src.slm_helpers import parse_summary_response
 from src.workflow.finalize_helpers import mean_step_confidence, reconcile_final_answer
 from src.utils import PlanSummaryFormat
 
@@ -46,7 +46,7 @@ class SummarizerAgent:
         system_message = summary_system_message
         if len(request.step_answers) > 1:
             system_message += summary_multi_step_addon
-        if is_ollama_provider():
+        if is_agent_ollama("summarizer"):
             system_message += summary_slm_output_format_addon
         messages = [
             SystemMessagePromptTemplate.from_template(system_message),
@@ -56,9 +56,9 @@ class SummarizerAgent:
             input_variables=summary_input_variables,
             messages=messages,
         )
-        llm = create_chat_llm(temperature=0.0)
+        llm = create_chat_llm(agent_id="summarizer", temperature=0.0)
         inputs = {"question": request.question, "plan": plan, "memory": memory}
-        if is_ollama_provider():
+        if is_agent_ollama("summarizer"):
             text = (prompt | llm | StrOutputParser()).invoke(inputs)
             parsed = parse_summary_response(text)
             answer = parsed["answer"]

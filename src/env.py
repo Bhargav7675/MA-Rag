@@ -24,12 +24,40 @@ def get_openai_api_key() -> str:
 
 def get_llm_provider() -> str:
     """LLM backend: openai (cloud API) or ollama (on-prem SLM)."""
-    raw = os.getenv("MA_RAG_LLM_PROVIDER", "openai").strip().lower()
-    if raw not in {"openai", "ollama"}:
+    return _normalize_provider(os.getenv("MA_RAG_LLM_PROVIDER", "openai"))
+
+
+def _normalize_provider(raw: str) -> str:
+    value = raw.strip().lower()
+    if value not in {"openai", "ollama"}:
         raise RuntimeError(
-            f"Invalid MA_RAG_LLM_PROVIDER={raw!r}. Use 'openai' or 'ollama'."
+            f"Invalid LLM provider {raw!r}. Use 'openai' or 'ollama'."
         )
-    return raw
+    return value
+
+
+def _agent_env_key(agent_id: str) -> str:
+    return agent_id.upper().replace("-", "_")
+
+
+def get_agent_llm_provider(agent_id: str | None = None) -> str:
+    """Per-agent provider override via MA_RAG_<AGENT>_PROVIDER (e.g. MA_RAG_PLANNER_PROVIDER)."""
+    if agent_id:
+        key = f"MA_RAG_{_agent_env_key(agent_id)}_PROVIDER"
+        raw = os.getenv(key)
+        if raw:
+            return _normalize_provider(raw)
+    return get_llm_provider()
+
+
+def get_agent_ollama_model(agent_id: str | None = None) -> str:
+    """Per-agent Ollama model override via MA_RAG_<AGENT>_OLLAMA_MODEL."""
+    if agent_id:
+        key = f"MA_RAG_{_agent_env_key(agent_id)}_OLLAMA_MODEL"
+        raw = os.getenv(key)
+        if raw:
+            return raw.strip()
+    return get_ollama_model()
 
 
 def get_model_name() -> str:
@@ -85,6 +113,14 @@ def get_local_embedding_model_name() -> str:
 
 def get_local_embedding_backend() -> str:
     return os.getenv("MA_RAG_LOCAL_EMBEDDING_BACKEND", "hashing")
+
+
+def get_api_host() -> str:
+    return os.getenv("MA_RAG_API_HOST", "127.0.0.1")
+
+
+def get_api_port() -> int:
+    return int(os.getenv("MA_RAG_API_PORT", "8000"))
 
 
 def get_pubmed_corpus_path() -> Path | None:

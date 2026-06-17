@@ -146,7 +146,7 @@ class RagStepAgent:
             input_variables=aggregate_input_variables,
             messages=messages,
         )
-        llm = create_chat_llm(temperature=0.0)
+        llm = create_chat_llm(agent_id="rag_step", temperature=0.0)
         chain = prompt | llm.with_structured_output(QAAnswerFormat)
         raw = chain.invoke({"question": task})
         return StepAnswer(

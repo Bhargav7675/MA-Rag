@@ -10,7 +10,7 @@ from langchain_core.prompts.chat import (
 )
 
 from src.contracts.messages import StepAnswer, VerifyRequest, VerifyResponse
-from src.llm import create_chat_llm
+from src.llm import create_chat_llm, is_agent_ollama
 from src.prompt_template import (
     critic_human_message,
     critic_input_variables,
@@ -19,7 +19,7 @@ from src.prompt_template import (
     critic_system_message,
 )
 from src.workflow.finalize_helpers import reconcile_final_answer
-from src.slm_helpers import is_ollama_provider, parse_verify_response
+from src.slm_helpers import parse_verify_response
 from src.utils import VerifyFormat
 
 AGENT_ID = "critic"
@@ -56,7 +56,7 @@ class CriticAgent:
         system_message = critic_system_message
         if multi_step:
             system_message += critic_multi_step_addon
-        if is_ollama_provider():
+        if is_agent_ollama("critic"):
             system_message += critic_slm_output_format_addon
         messages = [
             SystemMessagePromptTemplate.from_template(system_message),
@@ -66,7 +66,7 @@ class CriticAgent:
             input_variables=critic_input_variables,
             messages=messages,
         )
-        llm = create_chat_llm(temperature=0.0)
+        llm = create_chat_llm(agent_id="critic", temperature=0.0)
         inputs = {
             "question": request.question,
             "draft_answer": request.draft_answer,
@@ -74,7 +74,7 @@ class CriticAgent:
             "chunk_ids": chunk_ids,
         }
 
-        if is_ollama_provider():
+        if is_agent_ollama("critic"):
             text = (prompt | llm | StrOutputParser()).invoke(inputs)
             parsed = parse_verify_response(text)
             passed = parsed["passed"]

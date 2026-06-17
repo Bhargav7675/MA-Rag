@@ -8,9 +8,9 @@ from src.prompt_template import (
     qa_system_message,
 )
 from langchain_core.prompts.chat import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
-from src.llm import create_chat_llm
+from src.llm import create_chat_llm, is_agent_ollama
 from langchain_core.output_parsers import StrOutputParser
-from src.slm_helpers import is_ollama_provider, parse_qa_response
+from src.slm_helpers import parse_qa_response
 from langgraph.graph import StateGraph, START, END
 
 from dotenv import load_dotenv
@@ -24,7 +24,7 @@ def _extract_notes(question: str, documents: list[str]) -> list[str]:
         HumanMessagePromptTemplate.from_template(extract_human_message),
     ]
     prompt = ChatPromptTemplate(input_variables=extract_input_variables, messages=messages)
-    llm = create_chat_llm(temperature=0.0)
+    llm = create_chat_llm(agent_id="rag_step", temperature=0.0)
     chain = prompt | llm | StrOutputParser()
     list_notes = []
     for doc in documents:
@@ -39,16 +39,19 @@ def _generate_answer(question: str, doc_ids: list, notes: list[str]) -> QAAnswer
         tmps.append(f"doc_{doc_id}: {note}")
     docs = "\n\n".join(tmps)
     system_message = qa_system_message + qa_grounded_addon
-    if is_ollama_provider():
+    if is_agent_ollama("rag_step"):
         system_message += qa_slm_output_format_addon
     messages = [
         SystemMessagePromptTemplate.from_template(system_message),
         HumanMessagePromptTemplate.from_template(qa_human_message),
     ]
     prompt = ChatPromptTemplate(input_variables=qa_input_variables, messages=messages)
-    llm = create_chat_llm(temperature=0.0 if is_ollama_provider() else 0.3)
+    llm = create_chat_llm(
+        agent_id="rag_step",
+        temperature=0.0 if is_agent_ollama("rag_step") else 0.3,
+    )
     inputs = {"context": docs, "question": question}
-    if is_ollama_provider():
+    if is_agent_ollama("rag_step"):
         text = (prompt | llm | StrOutputParser()).invoke(inputs)
         parsed = parse_qa_response(text)
         return QAAnswerState(**parsed)

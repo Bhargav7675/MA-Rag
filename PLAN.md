@@ -23,11 +23,11 @@
 
 | Plane | Target | Status |
 |-------|--------|--------|
-| **1. User / Ingress** | API, sessions | Skipped — CLI `ask.py` only |
+| **1. User / Ingress** | API, sessions | **Scaffolding** — `POST /ask` via FastAPI |
 | **2. Agent control** | Router, Planner, Retrieval, Curator, Critic, Summarizer | **Done locally** |
-| **3. A2A** | Queues, registry | Not started — typed Pydantic messages today |
+| **3. A2A** | Queues, registry | **Scaffolding** — in-process bus + agent registry |
 | **4. Workflow runtime** | 0→6 steps | **Done** |
-| **5. Tool & evidence** | FAISS, ingest, evidence ledger | **Done locally** |
+| **5. Tool & evidence** | FAISS, ingest, evidence ledger | **Done** — MCP-style `faiss_retrieve` tool |
 | **SLM** | Ollama on-prem | **Done** — `llama3.2:3b` |
 
 ### Workflow trace (`--agentic`)
@@ -47,15 +47,13 @@ route → init_plan → retrieve → evidence_check → context_build → genera
 | **SLM** | Complete — Ollama, `src/slm_helpers.py`, SLM prompts/parsers |
 | **Track C** | Complete — Evidence Curator, Critic, JSONL evidence ledger |
 | **Router** | Complete — `RouterAgent`, simple vs multi-hop triage |
-| **Eval** | `eval_kb.py` — **4/4 passing** |
+| **Eval** | `eval_kb.py` — **8/8 passing** |
 
 ### Not started
 
-- Per-agent model config (hybrid SLM + OpenAI planner)
-- MCP tool gateway
-- A2A message bus / agent registry
-- API ingress (`POST /ask`)
 - OCI mapping
+- Remote A2A transport (queue / worker)
+- Full MCP server process (stdio/SSE)
 
 ---
 
@@ -129,8 +127,18 @@ python ingest.py ./docs
 # Main path
 python ask.py "What is the current completed phase of the MA-RAG prototype?" --agentic
 
-# Regression (expect 4/4)
+# Regression (expect 8/8)
 python eval_kb.py
+
+# API ingress
+python run_api.py
+# curl -s http://127.0.0.1:8000/health
+# curl -s -X POST http://127.0.0.1:8000/ask -H 'Content-Type: application/json' \
+#   -d '{"question":"What is the current completed phase of the MA-RAG prototype?"}'
+
+# MCP-style tool + A2A introspection
+# curl -s http://127.0.0.1:8000/tools
+# curl -s http://127.0.0.1:8000/agents
 
 # Retrieval debug only
 python ask.py "your question" --retrieve-only
@@ -182,8 +190,14 @@ Recent commits (newest first):
 
 ```
 ask.py                          # CLI entry (--agentic, --retrieve-only, --llm-only)
+run_api.py                      # FastAPI ingress (POST /ask)
 ingest.py                       # FAISS index build
 eval_kb.py                      # KB regression harness
+src/tools/                      # MCP-style tool gateway (faiss_retrieve)
+src/a2a/                        # In-process A2A bus + agent registry
+src/api/app.py                  # FastAPI routes
+src/workflow/a2a_setup.py       # Wire agents onto A2A bus
+src/workflow/service.py         # Shared workflow service (CLI + API)
 agents/router_agent.py
 agents/planner_agent.py
 agents/retrieval_agent.py
@@ -221,12 +235,13 @@ docs/wiki/Roadmap.md
 ## 12. Next steps (recommended order)
 
 1. ~~Router agent~~ **Done**
-2. **Expand `eval_kb.py`** — 10–15 questions for regression
-3. **Per-agent model config** — YAML: SLM for extract, optional GPT for planner
-4. **MCP-style tool wrapper** — FAISS retriever as formal tool interface
-5. **A2A scaffolding** — in-process bus → future queue
-6. **FastAPI `POST /ask`** — minimal ingress when employer wants API
+2. ~~Expand `eval_kb.py`~~ **8/8 passing**
+3. ~~Per-agent model config~~ **Done**
+4. ~~MCP-style tool wrapper~~ **Done** — `faiss_retrieve` via `src/tools/`
+5. ~~A2A scaffolding~~ **Done** — `src/a2a/` in-process bus
+6. ~~FastAPI `POST /ask`~~ **Done** — `run_api.py`
 7. **Push branch** — when user requests
+8. **Remote A2A / full MCP server** — future
 
 ---
 
@@ -237,7 +252,7 @@ Paste this when opening a fresh session:
 ```
 I'm continuing MA-RAG on branch feature/track-b-agentic.
 Read PLAN.md in the repo root first — it has full project continuity.
-Stack: Ollama llama3.2:3b, --agentic workflow, FAISS, evidence ledger, eval_kb 4/4.
+Stack: Ollama llama3.2:3b, --agentic workflow, FAISS, evidence ledger, eval_kb 8/8, FastAPI POST /ask.
 Do not push to GitHub unless I ask. Do not commit unless I ask.
 ```
 

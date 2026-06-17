@@ -14,20 +14,29 @@ from agents.step_definer_agent import StepDefinerAgent
 from agents.summarizer_agent import SummarizerAgent
 from src.contracts.messages import (
     EvidenceReviewRequest,
+    EvidenceReviewResponse,
     FinalAnswerPackage,
     PlanRequest,
+    PlanResponse,
+    RetrievalResponse,
     RetrievalTask,
     RouterRequest,
+    RouterResponse,
     StepAnswer,
     StepDefineRequest,
+    StepDefineResponse,
     StepTaskType,
     SummarizeRequest,
+    SummarizeResponse,
     UserRequest,
     VerifyRequest,
+    VerifyResponse,
     WorkflowStep,
 )
 from src.evidence_ledger import EvidenceLedger
 from src.pipeline import normalize_question
+from src.tools.registry import ToolRegistry, default_tool_registry
+from src.workflow.a2a_setup import a2a_request, setup_a2a_bus
 from src.workflow.finalize_helpers import (
     all_steps_successful,
     format_kb_multi_hop_answer,
@@ -44,16 +53,121 @@ class WorkflowEngine:
            → FINALIZE draft → VERIFY → FINALIZE
     """
 
-    def __init__(self, retriever_tool: Any):
+    def __init__(
+        self,
+        retriever_tool: Any,
+        *,
+        tool_registry: Optional[ToolRegistry] = None,
+        use_a2a: bool = True,
+    ):
         self.retriever_tool = retriever_tool
+        self.tool_registry = tool_registry or default_tool_registry(retriever_tool)
+        self.use_a2a = use_a2a
         self.router = RouterAgent()
         self.planner = PlannerAgent()
-        self.retrieval = RetrievalAgent(retriever_tool)
+        self.retrieval = RetrievalAgent(tool_registry=self.tool_registry)
         self.evidence_curator = EvidenceCuratorAgent()
         self.step_definer = StepDefinerAgent()
         self.rag_step = RagStepAgent(retriever_tool)
         self.summarizer = SummarizerAgent()
         self.critic = CriticAgent()
+        self.a2a_bus = setup_a2a_bus(
+            router=self.router,
+            planner=self.planner,
+            retrieval=self.retrieval,
+            evidence_curator=self.evidence_curator,
+            step_definer=self.step_definer,
+            summarizer=self.summarizer,
+            critic=self.critic,
+        ) if use_a2a else None
+
+    def _dispatch_router(self, request: RouterRequest) -> RouterResponse:
+        if self.use_a2a and self.a2a_bus:
+            data = a2a_request(
+                self.a2a_bus,
+                to_agent="router",
+                message_type="router.request",
+                payload=request.model_dump(mode="json"),
+                correlation_id=request.run_id,
+            )
+            return RouterResponse(**data)
+        return self.router.run(request)
+
+    def _dispatch_planner(self, request: PlanRequest) -> PlanResponse:
+        if self.use_a2a and self.a2a_bus:
+            data = a2a_request(
+                self.a2a_bus,
+                to_agent="planner",
+                message_type="plan.request",
+                payload=request.model_dump(mode="json"),
+                correlation_id=request.run_id,
+            )
+            return PlanResponse(**data)
+        return self.planner.run(request)
+
+    def _dispatch_retrieval(self, task: RetrievalTask) -> RetrievalResponse:
+        if self.use_a2a and self.a2a_bus:
+            data = a2a_request(
+                self.a2a_bus,
+                to_agent="retrieval",
+                message_type="retrieval.task",
+                payload=task.model_dump(mode="json"),
+                correlation_id=task.run_id,
+            )
+            return RetrievalResponse(**data)
+        return self.retrieval.run(task)
+
+    def _dispatch_evidence(
+        self, request: EvidenceReviewRequest
+    ) -> EvidenceReviewResponse:
+        if self.use_a2a and self.a2a_bus:
+            data = a2a_request(
+                self.a2a_bus,
+                to_agent="evidence_curator",
+                message_type="evidence.review",
+                payload=request.model_dump(mode="json"),
+                correlation_id=request.run_id,
+            )
+            return EvidenceReviewResponse(**data)
+        return self.evidence_curator.run(request)
+
+    def _dispatch_step_definer(
+        self, request: StepDefineRequest
+    ) -> StepDefineResponse:
+        if self.use_a2a and self.a2a_bus:
+            data = a2a_request(
+                self.a2a_bus,
+                to_agent="step_definer",
+                message_type="step.define",
+                payload=request.model_dump(mode="json"),
+                correlation_id=request.run_id,
+            )
+            return StepDefineResponse(**data)
+        return self.step_definer.run(request)
+
+    def _dispatch_summarizer(self, request: SummarizeRequest) -> SummarizeResponse:
+        if self.use_a2a and self.a2a_bus:
+            data = a2a_request(
+                self.a2a_bus,
+                to_agent="summarizer",
+                message_type="summarize.request",
+                payload=request.model_dump(mode="json"),
+                correlation_id=request.run_id,
+            )
+            return SummarizeResponse(**data)
+        return self.summarizer.run(request)
+
+    def _dispatch_critic(self, request: VerifyRequest) -> VerifyResponse:
+        if self.use_a2a and self.a2a_bus:
+            data = a2a_request(
+                self.a2a_bus,
+                to_agent="critic",
+                message_type="verify.request",
+                payload=request.model_dump(mode="json"),
+                correlation_id=request.run_id,
+            )
+            return VerifyResponse(**data)
+        return self.critic.run(request)
 
     def run(self, question: str, *, run_id: Optional[str] = None) -> FinalAnswerPackage:
         question = normalize_question(question)
@@ -63,7 +177,7 @@ class WorkflowEngine:
 
         ledger = EvidenceLedger(user.run_id)
         trace: list[WorkflowStep] = [WorkflowStep.ROUTE]
-        route_res = self.router.run(
+        route_res = self._dispatch_router(
             RouterRequest(run_id=user.run_id, question=user.question)
         )
         ledger.append(
@@ -76,7 +190,7 @@ class WorkflowEngine:
         )
 
         trace.append(WorkflowStep.INIT_PLAN)
-        plan_res = self.planner.run(
+        plan_res = self._dispatch_planner(
             PlanRequest(
                 run_id=user.run_id,
                 question=user.question,
@@ -101,7 +215,7 @@ class WorkflowEngine:
                 task = user.question
                 task_type = StepTaskType.QUESTION_ANSWERING
             else:
-                define_res = self.step_definer.run(
+                define_res = self._dispatch_step_definer(
                     StepDefineRequest(
                         run_id=user.run_id,
                         plan_steps=plan_res.steps,
@@ -142,7 +256,7 @@ class WorkflowEngine:
                 continue
 
             trace.append(WorkflowStep.RETRIEVE)
-            retrieval = self.retrieval.run(
+            retrieval = self._dispatch_retrieval(
                 RetrievalTask(
                     run_id=user.run_id,
                     step_index=step_index,
@@ -161,7 +275,7 @@ class WorkflowEngine:
             )
 
             trace.append(WorkflowStep.EVIDENCE_CHECK)
-            evidence = self.evidence_curator.run(
+            evidence = self._dispatch_evidence(
                 EvidenceReviewRequest(
                     run_id=user.run_id,
                     step_index=step_index,
@@ -291,7 +405,7 @@ class WorkflowEngine:
                     },
                 )
             else:
-                summary = self.summarizer.run(
+                summary = self._dispatch_summarizer(
                     SummarizeRequest(
                         run_id=user.run_id,
                         question=user.question,
@@ -309,7 +423,7 @@ class WorkflowEngine:
                 )
 
                 trace.append(WorkflowStep.VERIFY)
-                verify = self.critic.run(
+                verify = self._dispatch_critic(
                     VerifyRequest(
                         run_id=user.run_id,
                         question=user.question,
@@ -345,7 +459,7 @@ class WorkflowEngine:
                     verify_issues.extend(extra_issues)
                     verify_passed = True
         else:
-            summary = self.summarizer.run(
+            summary = self._dispatch_summarizer(
                 SummarizeRequest(
                     run_id=user.run_id,
                     question=user.question,
@@ -363,7 +477,7 @@ class WorkflowEngine:
             )
 
             trace.append(WorkflowStep.VERIFY)
-            verify = self.critic.run(
+            verify = self._dispatch_critic(
                 VerifyRequest(
                     run_id=user.run_id,
                     question=user.question,

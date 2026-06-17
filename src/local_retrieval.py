@@ -213,14 +213,24 @@ class LocalRetrieverTool:
         return chunks
 
     def __call__(self, query: str):
+        hits = self.search_with_scores(query, top_k=self.top_k)
+        docs = [text for _, text, _ in hits]
+        doc_ids = [doc_id for doc_id, _, _ in hits]
+        return docs, doc_ids
+
+    def search_with_scores(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+    ) -> list[tuple[str, str, float]]:
+        k = top_k or self.top_k
         query_embedding = embed_texts([query], self.model)
-        _, indices = self.index.search(query_embedding, self.top_k)
-        docs: list[str] = []
-        doc_ids: list[str] = []
-        for idx in indices[0]:
+        scores, indices = self.index.search(query_embedding, k)
+        hits: list[tuple[str, str, float]] = []
+        for idx, score in zip(indices[0], scores[0]):
             if idx < 0 or idx >= len(self.chunks):
                 continue
             chunk = self.chunks[int(idx)]
-            docs.append(chunk.text)
-            doc_ids.append(chunk.doc_id)
-        return docs, doc_ids
+            hits.append((chunk.doc_id, chunk.text, float(score)))
+        return hits

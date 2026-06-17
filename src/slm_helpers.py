@@ -122,6 +122,15 @@ def parse_qa_response(text: str) -> dict:
         result["success"] = "No"
         result["rating"] = 0
 
+    if (
+        result["answer"].strip()
+        and answer_lower not in _PLACEHOLDER_ANSWERS
+        and result["rating"] >= 5
+        and result["success"] == "No"
+    ):
+        # Small models often emit success=No with a high rating when evidence is noisy.
+        result["success"] = "Yes"
+
     if result["success"] == "Yes" and result["rating"] == 0:
         result["rating"] = 6
 
