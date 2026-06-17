@@ -9,6 +9,7 @@ from agents.evidence_curator_agent import EvidenceCuratorAgent
 from agents.planner_agent import PlannerAgent
 from agents.rag_step_agent import RagStepAgent
 from agents.retrieval_agent import RetrievalAgent
+from agents.router_agent import RouterAgent
 from agents.step_definer_agent import StepDefinerAgent
 from agents.summarizer_agent import SummarizerAgent
 from src.contracts.messages import (
@@ -16,6 +17,7 @@ from src.contracts.messages import (
     FinalAnswerPackage,
     PlanRequest,
     RetrievalTask,
+    RouterRequest,
     StepAnswer,
     StepDefineRequest,
     StepTaskType,
@@ -38,12 +40,13 @@ class WorkflowEngine:
     """
     Orchestrates typed agents without LangGraph shared state.
 
-    Steps: INIT_PLAN → (per plan step: RETRIEVE → EVIDENCE_CHECK → GENERATE)
+    Steps: ROUTE → INIT_PLAN → (per plan step: RETRIEVE → EVIDENCE_CHECK → GENERATE)
            → FINALIZE draft → VERIFY → FINALIZE
     """
 
     def __init__(self, retriever_tool: Any):
         self.retriever_tool = retriever_tool
+        self.router = RouterAgent()
         self.planner = PlannerAgent()
         self.retrieval = RetrievalAgent(retriever_tool)
         self.evidence_curator = EvidenceCuratorAgent()
@@ -59,9 +62,26 @@ class WorkflowEngine:
             user.run_id = run_id
 
         ledger = EvidenceLedger(user.run_id)
-        trace: list[WorkflowStep] = [WorkflowStep.INIT_PLAN]
+        trace: list[WorkflowStep] = [WorkflowStep.ROUTE]
+        route_res = self.router.run(
+            RouterRequest(run_id=user.run_id, question=user.question)
+        )
+        ledger.append(
+            agent="router",
+            workflow_step=WorkflowStep.ROUTE.value,
+            payload={
+                "decision": route_res.decision.value,
+                "rationale": route_res.rationale,
+            },
+        )
+
+        trace.append(WorkflowStep.INIT_PLAN)
         plan_res = self.planner.run(
-            PlanRequest(run_id=user.run_id, question=user.question)
+            PlanRequest(
+                run_id=user.run_id,
+                question=user.question,
+                route_decision=route_res.decision,
+            )
         )
         ledger.append(
             agent="planner",
@@ -391,6 +411,7 @@ class WorkflowEngine:
             verify_passed=verify_passed,
             verify_issues=verify_issues,
             evidence_ledger_path=str(ledger.path),
+            route_decision=route_res.decision,
         )
 
 
@@ -411,6 +432,8 @@ def format_workflow_output(package: FinalAnswerPackage) -> str:
     lines.append("\n=== Final answer ===")
     lines.append(package.answer)
     lines.append(f"Confidence score: {package.confidence}")
+    if package.route_decision is not None:
+        lines.append(f"Route: {package.route_decision.value}")
     if package.verify_passed is not None:
         lines.append(f"Verify passed: {'Yes' if package.verify_passed else 'No'}")
     if package.verify_issues:

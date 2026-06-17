@@ -8,7 +8,7 @@ from langchain_core.prompts.chat import (
     SystemMessagePromptTemplate,
 )
 
-from src.contracts.messages import PlanRequest, PlanResponse
+from src.contracts.messages import PlanRequest, PlanResponse, RouteDecision
 from src.llm import create_chat_llm
 from src.prompt_template import (
     planing_human_message,
@@ -50,9 +50,22 @@ class PlannerAgent:
         llm = create_chat_llm(temperature=temperature)
         chain = prompt | llm.with_structured_output(PlanFormat)
         output = chain.invoke({"question": request.question, "memory": memory})
+
         canonical = canonical_kb_plan(request.question)
         if canonical:
             steps = canonical
+        elif request.route_decision == RouteDecision.SIMPLE_RAG:
+            q = request.question.strip()
+            if not q.endswith("?"):
+                q = f"{q}?"
+            steps = [q]
+        elif request.route_decision == RouteDecision.MULTI_HOP_RAG:
+            steps = output.step
+            if is_ollama_provider() and len(steps) > 3:
+                q = request.question.strip()
+                if not q.endswith("?"):
+                    q = f"{q}?"
+                steps = [q]
         else:
             steps = simplify_plan_for_slm(request.question, output.step)
 

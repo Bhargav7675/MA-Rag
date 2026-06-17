@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import List, Optional, Tuple
 
+from src.contracts.messages import RouteDecision
 from src.env import get_llm_provider
 
 _PLACEHOLDER_ANSWERS = frozenset({"answer", "n/a", "unknown", "none", "no answer found", ""})
@@ -42,6 +43,24 @@ def canonical_kb_plan(question: str) -> List[str]:
             "What is Chandra Shekar Konda's title at Oracle?",
         ]
     return []
+
+
+def classify_route(question: str) -> Tuple[RouteDecision, str]:
+    """Heuristic triage: simple KB lookup vs multi-hop planning."""
+    if canonical_kb_plan(question):
+        return (
+            RouteDecision.MULTI_HOP_RAG,
+            "Known MA-RAG knowledge-base multi-hop pattern.",
+        )
+    if is_likely_multi_hop(question):
+        return (
+            RouteDecision.MULTI_HOP_RAG,
+            "Question contains multi-hop markers (e.g. 'and', 'both').",
+        )
+    return (
+        RouteDecision.SIMPLE_RAG,
+        "Direct factual lookup in the ingested knowledge base.",
+    )
 
 
 def simplify_plan_for_slm(question: str, steps: List[str]) -> List[str]:

@@ -21,6 +21,7 @@ class WorkflowStep(str, Enum):
     """Enterprise workflow runtime steps (subset used in Track B)."""
 
     INIT_PLAN = "init_plan"
+    ROUTE = "route"
     RETRIEVE = "retrieve"
     EVIDENCE_CHECK = "evidence_check"
     CONTEXT_BUILD = "context_build"
@@ -89,6 +90,7 @@ class RouterResponse(BaseModel):
 class PlanRequest(BaseModel):
     run_id: str
     question: str
+    route_decision: Optional[RouteDecision] = None
     past_trial_summaries: list[str] = Field(
         default_factory=list,
         description="Serialized outcomes from prior plan attempts",
@@ -225,3 +227,4 @@ class FinalAnswerPackage(BaseModel):
     verify_passed: Optional[bool] = None
     verify_issues: list[str] = Field(default_factory=list)
     evidence_ledger_path: Optional[str] = None
+    route_decision: Optional[RouteDecision] = None

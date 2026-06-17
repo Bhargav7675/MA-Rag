@@ -19,8 +19,7 @@
 
 ## Next
 
-- Re-ingest without `docs/wiki/` by default: `python ingest.py ./docs`
-- Multi-hop SLM tuning and regression eval
+- Router agent (simple vs multi-hop triage) — done
 - Per-agent model config (hybrid SLM + cloud planner optional)
 - A2A services + MCP tool gateway (later)
 - API ingress (later)
