@@ -10,15 +10,19 @@ from src.prompt_template import (
 from langchain_core.prompts.chat import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
 from src.llm import create_chat_llm, is_agent_ollama
 from langchain_core.output_parsers import StrOutputParser
-from src.slm_helpers import parse_qa_response
+from src.slm_helpers import apply_factual_answer_fallback, parse_qa_response
 from langgraph.graph import StateGraph, START, END
+from src.env import get_skip_rag_extract
 
-from dotenv import load_dotenv
 
-load_dotenv()
+def _raw_passage_notes(documents: list[str]) -> list[str]:
+    """Use retrieved text directly — no per-chunk extract LLM calls."""
+    return [f"[{doc[:1500]}]" for doc in documents]
 
 
 def _extract_notes(question: str, documents: list[str]) -> list[str]:
+    if get_skip_rag_extract():
+        return _raw_passage_notes(documents)
     messages = [
         SystemMessagePromptTemplate.from_template(extract_system_messgage),
         HumanMessagePromptTemplate.from_template(extract_human_message),
@@ -33,7 +37,13 @@ def _extract_notes(question: str, documents: list[str]) -> list[str]:
     return list_notes
 
 
-def _generate_answer(question: str, doc_ids: list, notes: list[str]) -> QAAnswerState:
+def _generate_answer(
+    question: str,
+    doc_ids: list,
+    notes: list[str],
+    *,
+    raw_documents=None,
+) -> QAAnswerState:
     tmps = []
     for doc_id, note in zip(doc_ids, notes):
         tmps.append(f"doc_{doc_id}: {note}")
@@ -54,6 +64,12 @@ def _generate_answer(question: str, doc_ids: list, notes: list[str]) -> QAAnswer
     if is_agent_ollama("rag_step"):
         text = (prompt | llm | StrOutputParser()).invoke(inputs)
         parsed = parse_qa_response(text)
+        parsed = apply_factual_answer_fallback(
+            question,
+            parsed,
+            raw_documents=raw_documents,
+            formatted_context=docs,
+        )
         return QAAnswerState(**parsed)
     structured_llm = llm.with_structured_output(QAAnswerFormat)
     raw = (prompt | structured_llm).invoke(inputs)
@@ -67,7 +83,7 @@ def run_rag_extract_generate(
 ) -> dict:
     """Extract + generate on pre-retrieved documents (workflow evidence path)."""
     notes = _extract_notes(question, documents)
-    answer = _generate_answer(question, doc_ids, notes)
+    answer = _generate_answer(question, doc_ids, notes, raw_documents=documents)
     return {
         "question": question,
         "documents": documents,
@@ -94,6 +110,7 @@ def build_rag_agent(retriever_tool=None):
             state["question"],
             state["doc_ids"],
             state["notes"],
+            raw_documents=state.get("documents"),
         )
         return {"final_raw_answer": response}
 

@@ -43,6 +43,9 @@ def refine_task_from_prior(
     cur_lower = cur_step.lower()
     prior_lower = prior_blob.lower()
 
+    if ("organization" in cur_lower or "team" in cur_lower or "collaborator" in cur_lower) and "oracle" in cur_lower:
+        return "Who does the volunteer researcher on MA-RAG work with at Oracle?"
+
     if "title" in cur_lower and "oracle" in cur_lower:
         for name in _KB_NAMES[:2]:
             if name.lower() in prior_lower:

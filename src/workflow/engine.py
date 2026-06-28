@@ -13,6 +13,7 @@ from agents.router_agent import RouterAgent
 from agents.step_definer_agent import StepDefinerAgent
 from agents.summarizer_agent import SummarizerAgent
 from src.a2a.file_journal import A2AFileJournal
+from src.a2a.file_queue_bus import FileQueueA2ABus
 from src.contracts.messages import (
     EvidenceReviewRequest,
     EvidenceReviewResponse,
@@ -36,14 +37,26 @@ from src.contracts.messages import (
     WorkflowStep,
 )
 from src.evidence_ledger import EvidenceLedger
+from src.env import get_a2a_transport, get_fast_mode
 from src.pipeline import normalize_question
 from src.tools.registry import ToolRegistry, default_tool_registry
 from src.workflow.a2a_setup import a2a_request, setup_a2a_bus
+from src.workflow.events import (
+    WorkflowEvent,
+    WorkflowEventCallback,
+    WorkflowEventKind,
+    emit_event,
+)
+from src.slm_helpers import extract_factual_answer_from_context
 from src.workflow.finalize_helpers import (
     all_steps_successful,
+    finalize_multi_hop_quality,
     format_kb_multi_hop_answer,
+    format_summit_multi_hop_answer,
     mean_step_confidence,
+    normalize_step_answer,
     reconcile_final_answer,
+    steps_have_substantive_answers,
 )
 
 
@@ -74,19 +87,59 @@ class WorkflowEngine:
         self.summarizer = SummarizerAgent()
         self.critic = CriticAgent()
         self.a2a_journal = A2AFileJournal() if use_a2a else None
-        self.a2a_bus = setup_a2a_bus(
-            router=self.router,
-            planner=self.planner,
-            retrieval=self.retrieval,
-            evidence_curator=self.evidence_curator,
-            step_definer=self.step_definer,
-            rag_step=self.rag_step,
-            summarizer=self.summarizer,
-            critic=self.critic,
-            journal=self.a2a_journal,
-        ) if use_a2a else None
+        if use_a2a:
+            transport = get_a2a_transport()
+            if transport == "file_queue":
+                bus = FileQueueA2ABus(journal=self.a2a_journal)
+            else:
+                from src.a2a.bus import InProcessA2ABus
+
+                bus = InProcessA2ABus(journal=self.a2a_journal)
+            self.a2a_bus = setup_a2a_bus(
+                router=self.router,
+                planner=self.planner,
+                retrieval=self.retrieval,
+                evidence_curator=self.evidence_curator,
+                step_definer=self.step_definer,
+                rag_step=self.rag_step,
+                summarizer=self.summarizer,
+                critic=self.critic,
+                bus=bus,
+            )
+        else:
+            self.a2a_bus = None
+        self._on_event: Optional[WorkflowEventCallback] = None
+
+    def _emit(
+        self,
+        kind: WorkflowEventKind,
+        *,
+        run_id: str,
+        workflow_step: Optional[WorkflowStep] = None,
+        agent: Optional[str] = None,
+        message_type: Optional[str] = None,
+        payload: Optional[dict[str, Any]] = None,
+    ) -> None:
+        emit_event(
+            self._on_event,
+            WorkflowEvent(
+                run_id=run_id,
+                kind=kind,
+                workflow_step=workflow_step.value if workflow_step else None,
+                agent=agent,
+                message_type=message_type,
+                payload=payload or {},
+            ),
+        )
 
     def _dispatch_router(self, request: RouterRequest) -> RouterResponse:
+        self._emit(
+            WorkflowEventKind.AGENT_START,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.ROUTE,
+            agent="router",
+            message_type="router.request",
+        )
         if self.use_a2a and self.a2a_bus:
             data = a2a_request(
                 self.a2a_bus,
@@ -95,10 +148,30 @@ class WorkflowEngine:
                 payload=request.model_dump(mode="json"),
                 correlation_id=request.run_id,
             )
-            return RouterResponse(**data)
-        return self.router.run(request)
+            response = RouterResponse(**data)
+        else:
+            response = self.router.run(request)
+        self._emit(
+            WorkflowEventKind.AGENT_COMPLETE,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.ROUTE,
+            agent="router",
+            message_type="router.request",
+            payload={
+                "decision": response.decision.value,
+                "rationale": response.rationale,
+            },
+        )
+        return response
 
     def _dispatch_planner(self, request: PlanRequest) -> PlanResponse:
+        self._emit(
+            WorkflowEventKind.AGENT_START,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.INIT_PLAN,
+            agent="planner",
+            message_type="plan.request",
+        )
         if self.use_a2a and self.a2a_bus:
             data = a2a_request(
                 self.a2a_bus,
@@ -107,10 +180,28 @@ class WorkflowEngine:
                 payload=request.model_dump(mode="json"),
                 correlation_id=request.run_id,
             )
-            return PlanResponse(**data)
-        return self.planner.run(request)
+            response = PlanResponse(**data)
+        else:
+            response = self.planner.run(request)
+        self._emit(
+            WorkflowEventKind.AGENT_COMPLETE,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.INIT_PLAN,
+            agent="planner",
+            message_type="plan.request",
+            payload={"steps": response.steps, "analysis": response.analysis},
+        )
+        return response
 
     def _dispatch_retrieval(self, task: RetrievalTask) -> RetrievalResponse:
+        self._emit(
+            WorkflowEventKind.AGENT_START,
+            run_id=task.run_id,
+            workflow_step=WorkflowStep.RETRIEVE,
+            agent="retrieval",
+            message_type="retrieval.task",
+            payload={"step_index": task.step_index, "question": task.question},
+        )
         if self.use_a2a and self.a2a_bus:
             data = a2a_request(
                 self.a2a_bus,
@@ -119,12 +210,34 @@ class WorkflowEngine:
                 payload=task.model_dump(mode="json"),
                 correlation_id=task.run_id,
             )
-            return RetrievalResponse(**data)
-        return self.retrieval.run(task)
+            response = RetrievalResponse(**data)
+        else:
+            response = self.retrieval.run(task)
+        self._emit(
+            WorkflowEventKind.AGENT_COMPLETE,
+            run_id=task.run_id,
+            workflow_step=WorkflowStep.RETRIEVE,
+            agent="retrieval",
+            message_type="retrieval.task",
+            payload={
+                "step_index": task.step_index,
+                "chunk_count": len(response.chunks),
+                "chunk_ids": [chunk.doc_id for chunk in response.chunks],
+            },
+        )
+        return response
 
     def _dispatch_evidence(
         self, request: EvidenceReviewRequest
     ) -> EvidenceReviewResponse:
+        self._emit(
+            WorkflowEventKind.AGENT_START,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.EVIDENCE_CHECK,
+            agent="evidence_curator",
+            message_type="evidence.review",
+            payload={"step_index": request.step_index},
+        )
         if self.use_a2a and self.a2a_bus:
             data = a2a_request(
                 self.a2a_bus,
@@ -133,12 +246,34 @@ class WorkflowEngine:
                 payload=request.model_dump(mode="json"),
                 correlation_id=request.run_id,
             )
-            return EvidenceReviewResponse(**data)
-        return self.evidence_curator.run(request)
+            response = EvidenceReviewResponse(**data)
+        else:
+            response = self.evidence_curator.run(request)
+        self._emit(
+            WorkflowEventKind.AGENT_COMPLETE,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.EVIDENCE_CHECK,
+            agent="evidence_curator",
+            message_type="evidence.review",
+            payload={
+                "step_index": request.step_index,
+                "sufficiency": response.sufficiency.value,
+                "proceed": response.proceed,
+                "gaps": response.gaps,
+            },
+        )
+        return response
 
     def _dispatch_step_definer(
         self, request: StepDefineRequest
     ) -> StepDefineResponse:
+        self._emit(
+            WorkflowEventKind.AGENT_START,
+            run_id=request.run_id,
+            agent="step_definer",
+            message_type="step.define",
+            payload={"current_step_index": request.current_step_index},
+        )
         if self.use_a2a and self.a2a_bus:
             data = a2a_request(
                 self.a2a_bus,
@@ -147,10 +282,29 @@ class WorkflowEngine:
                 payload=request.model_dump(mode="json"),
                 correlation_id=request.run_id,
             )
-            return StepDefineResponse(**data)
-        return self.step_definer.run(request)
+            response = StepDefineResponse(**data)
+        else:
+            response = self.step_definer.run(request)
+        self._emit(
+            WorkflowEventKind.AGENT_COMPLETE,
+            run_id=request.run_id,
+            agent="step_definer",
+            message_type="step.define",
+            payload={
+                "task": response.task,
+                "task_type": response.task_type.value,
+            },
+        )
+        return response
 
     def _dispatch_summarizer(self, request: SummarizeRequest) -> SummarizeResponse:
+        self._emit(
+            WorkflowEventKind.AGENT_START,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.FINALIZE,
+            agent="summarizer",
+            message_type="summarize.request",
+        )
         if self.use_a2a and self.a2a_bus:
             data = a2a_request(
                 self.a2a_bus,
@@ -159,10 +313,30 @@ class WorkflowEngine:
                 payload=request.model_dump(mode="json"),
                 correlation_id=request.run_id,
             )
-            return SummarizeResponse(**data)
-        return self.summarizer.run(request)
+            response = SummarizeResponse(**data)
+        else:
+            response = self.summarizer.run(request)
+        self._emit(
+            WorkflowEventKind.AGENT_COMPLETE,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.FINALIZE,
+            agent="summarizer",
+            message_type="summarize.request",
+            payload={
+                "answer": response.answer,
+                "confidence": response.confidence,
+            },
+        )
+        return response
 
     def _dispatch_critic(self, request: VerifyRequest) -> VerifyResponse:
+        self._emit(
+            WorkflowEventKind.AGENT_START,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.VERIFY,
+            agent="critic",
+            message_type="verify.request",
+        )
         if self.use_a2a and self.a2a_bus:
             data = a2a_request(
                 self.a2a_bus,
@@ -171,10 +345,32 @@ class WorkflowEngine:
                 payload=request.model_dump(mode="json"),
                 correlation_id=request.run_id,
             )
-            return VerifyResponse(**data)
-        return self.critic.run(request)
+            response = VerifyResponse(**data)
+        else:
+            response = self.critic.run(request)
+        self._emit(
+            WorkflowEventKind.AGENT_COMPLETE,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.VERIFY,
+            agent="critic",
+            message_type="verify.request",
+            payload={
+                "passed": response.passed,
+                "confidence": response.confidence,
+                "issues": response.issues,
+            },
+        )
+        return response
 
     def _dispatch_rag_step(self, request: RagStepRequest) -> StepAnswer:
+        self._emit(
+            WorkflowEventKind.AGENT_START,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.GENERATE,
+            agent="rag_step",
+            message_type="rag.step",
+            payload={"step_index": request.step_index, "task": request.task},
+        )
         if self.use_a2a and self.a2a_bus:
             data = a2a_request(
                 self.a2a_bus,
@@ -183,24 +379,52 @@ class WorkflowEngine:
                 payload=request.model_dump(mode="json"),
                 correlation_id=request.run_id,
             )
-            return StepAnswer(**data)
-        kwargs = {
-            "run_id": request.run_id,
-            "step_index": request.step_index,
-            "plan_step": request.plan_step,
-            "task": request.task,
-            "task_type": request.task_type,
-        }
-        if request.documents is not None and request.doc_ids is not None:
-            kwargs["documents"] = request.documents
-            kwargs["doc_ids"] = request.doc_ids
-        return self.rag_step.run(**kwargs)
+            response = StepAnswer(**data)
+        else:
+            kwargs = {
+                "run_id": request.run_id,
+                "step_index": request.step_index,
+                "plan_step": request.plan_step,
+                "task": request.task,
+                "task_type": request.task_type,
+            }
+            if request.documents is not None and request.doc_ids is not None:
+                kwargs["documents"] = request.documents
+                kwargs["doc_ids"] = request.doc_ids
+            response = self.rag_step.run(**kwargs)
+        self._emit(
+            WorkflowEventKind.AGENT_COMPLETE,
+            run_id=request.run_id,
+            workflow_step=WorkflowStep.GENERATE,
+            agent="rag_step",
+            message_type="rag.step",
+            payload={
+                "step_index": request.step_index,
+                "success": response.success,
+                "confidence": response.confidence,
+                "answer": response.answer,
+            },
+        )
+        return response
 
-    def run(self, question: str, *, run_id: Optional[str] = None) -> FinalAnswerPackage:
+    def run(
+        self,
+        question: str,
+        *,
+        run_id: Optional[str] = None,
+        on_event: Optional[WorkflowEventCallback] = None,
+    ) -> FinalAnswerPackage:
         question = normalize_question(question)
         user = UserRequest(question=question)
         if run_id:
             user.run_id = run_id
+
+        self._on_event = on_event
+        self._emit(
+            WorkflowEventKind.WORKFLOW_START,
+            run_id=user.run_id,
+            payload={"question": user.question},
+        )
 
         ledger = EvidenceLedger(user.run_id)
         trace: list[WorkflowStep] = [WorkflowStep.ROUTE]
@@ -303,6 +527,40 @@ class WorkflowEngine:
                 },
             )
 
+            if get_fast_mode() and retrieval.chunks:
+                blob = "\n\n".join(
+                    chunk.text for chunk in retrieval.chunks if chunk.text.strip()
+                )
+                direct = extract_factual_answer_from_context(task, blob)
+                if direct:
+                    trace.append(WorkflowStep.CONTEXT_BUILD)
+                    trace.append(WorkflowStep.GENERATE)
+                    step_answers.append(
+                        StepAnswer(
+                            step_index=step_index,
+                            plan_step=plan_step,
+                            task=task,
+                            analysis="Fast mode: direct factual match from retrieved chunks.",
+                            answer=direct,
+                            success=True,
+                            confidence=9,
+                            doc_ids=[chunk.doc_id for chunk in retrieval.chunks],
+                        )
+                    )
+                    ledger.append(
+                        agent="rag_step",
+                        workflow_step=WorkflowStep.GENERATE.value,
+                        payload={
+                            "step_index": step_index,
+                            "task": task,
+                            "answer": direct,
+                            "success": True,
+                            "confidence": 9,
+                            "mode": "fast_factual",
+                        },
+                    )
+                    continue
+
             trace.append(WorkflowStep.EVIDENCE_CHECK)
             evidence = self._dispatch_evidence(
                 EvidenceReviewRequest(
@@ -369,7 +627,7 @@ class WorkflowEngine:
                     )
                     task = retry_task
 
-            if not evidence.proceed:
+            if not evidence.proceed and not retrieval.chunks:
                 step_answers.append(
                     StepAnswer(
                         step_index=step_index,
@@ -415,6 +673,8 @@ class WorkflowEngine:
             if not answer.success and len(plan_res.steps) > 1:
                 stop_early = True
 
+        step_answers = [normalize_step_answer(step) for step in step_answers]
+
         trace.append(WorkflowStep.FINALIZE)
         single_success = (
             len(plan_res.steps) == 1
@@ -452,8 +712,10 @@ class WorkflowEngine:
                     "mode": "single_step_pass_through",
                 },
             )
-        elif all_steps_successful(step_answers) and len(step_answers) >= 2:
+        elif steps_have_substantive_answers(step_answers) and len(step_answers) >= 2:
             formatted = format_kb_multi_hop_answer(step_answers)
+            if not formatted:
+                formatted = format_summit_multi_hop_answer(step_answers)
             if formatted:
                 final_answer = formatted
                 final_confidence = mean_step_confidence(step_answers)
@@ -534,6 +796,14 @@ class WorkflowEngine:
                 if extra_issues:
                     verify_issues.extend(extra_issues)
                     verify_passed = True
+                elif not verify_passed and all_steps_successful(step_answers):
+                    from src.workflow.finalize_helpers import merge_step_answers_text
+
+                    merged = merge_step_answers_text(step_answers)
+                    if merged and merged.strip() != final_answer.strip():
+                        final_answer = merged
+                        verify_issues.append("replaced failed verify with merged step answers")
+                        verify_passed = True
         else:
             summary = self._dispatch_summarizer(
                 SummarizeRequest(
@@ -588,8 +858,28 @@ class WorkflowEngine:
             if extra_issues:
                 verify_issues.extend(extra_issues)
                 verify_passed = True
+            elif not verify_passed and all_steps_successful(step_answers):
+                from src.workflow.finalize_helpers import merge_step_answers_text
 
-        return FinalAnswerPackage(
+                merged = merge_step_answers_text(step_answers)
+                if merged and merged.strip() != final_answer.strip():
+                    final_answer = merged
+                    verify_issues.append("replaced failed verify with merged step answers")
+                    verify_passed = True
+
+        if len(step_answers) >= 2 and steps_have_substantive_answers(step_answers):
+            final_answer, final_confidence, verify_passed, quality_issues = (
+                finalize_multi_hop_quality(
+                    final_answer,
+                    final_confidence,
+                    verify_passed,
+                    step_answers,
+                )
+            )
+            if quality_issues:
+                verify_issues.extend(quality_issues)
+
+        package = FinalAnswerPackage(
             run_id=user.run_id,
             question=user.question,
             answer=final_answer,
@@ -608,35 +898,22 @@ class WorkflowEngine:
             ),
             route_decision=route_res.decision,
         )
+        self._emit(
+            WorkflowEventKind.WORKFLOW_COMPLETE,
+            run_id=user.run_id,
+            payload={
+                "answer": package.answer,
+                "confidence": package.confidence,
+                "route": package.route_decision.value if package.route_decision else None,
+                "verify_passed": package.verify_passed,
+                "workflow_trace": [step.value for step in package.workflow_trace],
+            },
+        )
+        self._on_event = None
+        return package
 
 
 def format_workflow_output(package: FinalAnswerPackage) -> str:
-    lines: list[str] = []
-    lines.append("=== Plan ===")
-    for i, step in enumerate(package.plan_steps, start=1):
-        lines.append(f"{i}. {step}")
+    from src.workflow.event_display import format_workflow_output_clear
 
-    lines.append("\n=== Step trace ===")
-    for step in package.step_answers:
-        lines.append(f"\n--- Step {step.step_index + 1} ---")
-        lines.append(f"Task: {step.task}")
-        lines.append(f"Answer: {step.answer}")
-        lines.append(f"Success: {'Yes' if step.success else 'No'}")
-        lines.append(f"Confidence: {step.confidence}")
-
-    lines.append("\n=== Final answer ===")
-    lines.append(package.answer)
-    lines.append(f"Confidence score: {package.confidence}")
-    if package.route_decision is not None:
-        lines.append(f"Route: {package.route_decision.value}")
-    if package.verify_passed is not None:
-        lines.append(f"Verify passed: {'Yes' if package.verify_passed else 'No'}")
-    if package.verify_issues:
-        lines.append(f"Verify issues: {', '.join(package.verify_issues)}")
-    lines.append(f"\nRun id: {package.run_id}")
-    if package.evidence_ledger_path:
-        lines.append(f"Evidence ledger: {package.evidence_ledger_path}")
-    if package.a2a_journal_path:
-        lines.append(f"A2A journal: {package.a2a_journal_path}")
-    lines.append(f"Trace: {', '.join(s.value for s in package.workflow_trace)}")
-    return "\n".join(lines)
+    return format_workflow_output_clear(package)

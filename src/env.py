@@ -96,6 +96,24 @@ def get_a2a_journal_dir() -> Path:
     return Path(raw).expanduser().resolve()
 
 
+def get_a2a_queue_dir() -> Path:
+    raw = os.getenv(
+        "MA_RAG_A2A_QUEUE_DIR",
+        str(get_data_dir() / "a2a_queue"),
+    )
+    return Path(raw).expanduser().resolve()
+
+
+def get_a2a_transport() -> str:
+    """A2A transport: in_process (default) or file_queue (remote workers)."""
+    value = os.getenv("MA_RAG_A2A_TRANSPORT", "in_process").strip().lower()
+    if value not in {"in_process", "file_queue"}:
+        raise RuntimeError(
+            f"Invalid A2A transport {value!r}. Use 'in_process' or 'file_queue'."
+        )
+    return value
+
+
 def get_index_dir() -> Path:
     raw = os.getenv("MA_RAG_INDEX_DIR", str(PROJECT_ROOT / "save_embs" / "gte-ml-base"))
     return Path(raw).expanduser().resolve()
@@ -123,12 +141,67 @@ def get_local_embedding_backend() -> str:
     return os.getenv("MA_RAG_LOCAL_EMBEDDING_BACKEND", "hashing")
 
 
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_fast_mode() -> bool:
+    """Fewer LLM calls: skip planner/evidence/extract when heuristics suffice."""
+    return _env_flag("MA_RAG_FAST_MODE")
+
+
+def get_skip_rag_extract() -> bool:
+    """Skip per-chunk extract LLM calls (use raw passages). Defaults on in fast mode."""
+    if os.getenv("MA_RAG_SKIP_RAG_EXTRACT") is not None:
+        return _env_flag("MA_RAG_SKIP_RAG_EXTRACT")
+    return get_fast_mode()
+
+
+def get_retrieval_top_k() -> int:
+    raw = os.getenv("MA_RAG_RETRIEVAL_TOP_K")
+    if raw:
+        return max(1, int(raw))
+    return 2 if get_fast_mode() else 3
+
+
+def get_ollama_keep_alive() -> str:
+    """How long Ollama keeps the model loaded between requests (e.g. 5m, -1)."""
+    return os.getenv("OLLAMA_KEEP_ALIVE", "5m")
+
+
 def get_api_host() -> str:
     return os.getenv("MA_RAG_API_HOST", "127.0.0.1")
 
 
 def get_api_port() -> int:
     return int(os.getenv("MA_RAG_API_PORT", "8000"))
+
+
+def get_pdf_password() -> str | None:
+    """Default password for encrypted PDFs during ingest."""
+    raw = os.getenv("MA_RAG_PDF_PASSWORD")
+    return raw.strip() if raw else None
+
+
+def get_pdf_passwords_file() -> Path | None:
+    """JSON map of PDF filename (or \"*\") -> password."""
+    raw = os.getenv("MA_RAG_PDF_PASSWORDS_FILE")
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
+
+
+def get_pdf_ocr_enabled() -> bool:
+    """OCR scanned/image PDFs when embedded text is sparse."""
+    return _env_flag("MA_RAG_PDF_OCR", default=True)
+
+
+def get_pdf_ocr_min_chars_per_page() -> int:
+    raw = os.getenv("MA_RAG_PDF_OCR_MIN_CHARS_PER_PAGE", "50")
+    return max(1, int(raw))
 
 
 def get_pubmed_corpus_path() -> Path | None:

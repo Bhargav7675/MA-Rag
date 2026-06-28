@@ -45,10 +45,13 @@ def create_chat_llm(
     if provider == "ollama":
         from langchain_ollama import ChatOllama
 
+        from src.env import get_ollama_keep_alive
+
         return ChatOllama(
             model=get_agent_ollama_model(agent_id),
             base_url=get_ollama_base_url(),
             temperature=temperature,
+            keep_alive=get_ollama_keep_alive(),
         )
 
     return ChatOpenAI(

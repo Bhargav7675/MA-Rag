@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,7 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1)
     run_id: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    stream_format: Literal["human", "json"] = "human"
 
 
 class AskResponse(BaseModel):
@@ -51,6 +52,8 @@ class HealthResponse(BaseModel):
     status: str
     llm: str
     index_ready: bool
+    api_version: str = "0.2.0"
+    stream_default: str = "human"
 
 
 class ToolInvokeRequest(BaseModel):

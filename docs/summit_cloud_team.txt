@@ -1,0 +1,19 @@
+Summit Cloud — Team Directory (sample document)
+
+Summit Cloud is a fictional cloud hosting provider based in Portland, Oregon.
+
+Leadership:
+- VP of Engineering: Jordan Lee
+- Director of Customer Success: Taylor Kim
+
+Platform team:
+- Platform Lead: Alex Rivera
+- Platform Lead reports to Jordan Lee (VP of Engineering)
+- Alex Rivera maintains the Kubernetes platform used by Greenfield Health and other enterprise clients.
+
+Support team:
+- Support Manager: Sam Ortiz
+- Sam Ortiz manages the 24/7 operations desk for Summit Cloud enterprise customers.
+
+Key fact for demos:
+Greenfield Health uses Summit Cloud hosting managed by Alex Rivera under Jordan Lee's engineering organization.

@@ -42,7 +42,8 @@ def _run_rag_step(rag_step: RagStepAgent, payload: dict[str, Any]) -> dict[str, 
     return rag_step.run(**kwargs).model_dump()
 
 
-def setup_a2a_bus(
+def register_a2a_agents(
+    bus: InProcessA2ABus,
     *,
     router: RouterAgent,
     planner: PlannerAgent,
@@ -52,10 +53,7 @@ def setup_a2a_bus(
     rag_step: RagStepAgent,
     summarizer: SummarizerAgent,
     critic: CriticAgent,
-    journal: Optional[A2AFileJournal] = None,
 ) -> InProcessA2ABus:
-    bus = InProcessA2ABus(journal=journal)
-
     bus.register_agent(
         AgentDescriptor(
             agent_id="router",
@@ -124,6 +122,36 @@ def setup_a2a_bus(
     )
 
     return bus
+
+
+def setup_a2a_bus(
+    *,
+    router: RouterAgent,
+    planner: PlannerAgent,
+    retrieval: RetrievalAgent,
+    evidence_curator: EvidenceCuratorAgent,
+    step_definer: StepDefinerAgent,
+    rag_step: RagStepAgent,
+    summarizer: SummarizerAgent,
+    critic: CriticAgent,
+    journal: Optional[A2AFileJournal] = None,
+    bus: Optional[InProcessA2ABus] = None,
+) -> InProcessA2ABus:
+    if bus is None:
+        bus = InProcessA2ABus(journal=journal)
+    elif journal is not None:
+        bus.journal = journal
+    return register_a2a_agents(
+        bus,
+        router=router,
+        planner=planner,
+        retrieval=retrieval,
+        evidence_curator=evidence_curator,
+        step_definer=step_definer,
+        rag_step=rag_step,
+        summarizer=summarizer,
+        critic=critic,
+    )
 
 
 def a2a_request(

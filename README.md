@@ -39,19 +39,29 @@ See `.env.sample` for optional paths (`MA_RAG_DATA_DIR`, `MA_RAG_INDEX_DIR`, dev
 
 ## Ingest local documents (new in Phase 0)
 
-For small local RAG, put `.pdf`, `.txt`, or `.md` files in `docs/`, then run:
+Put all knowledge files in **`docs/`** (IEEE KB, demo corpora, your own files — one folder). Supported formats: **`.pdf`**, **`.txt`**, **`.md`**, **`.docx`**, **`.xlsx`**, **`.xls`**, **`.pptx`**. Password-protected PDFs and scanned PDFs (OCR) are supported — see `.env.sample`. Then run:
 
 ```bash
-python ingest.py ./docs
+python ingest.py
 ```
 
-This writes a local FAISS index to `local_index/`. By default it uses a CPU-only hashing embedder, so it does not need a HuggingFace model download.
+(`./docs` is the default path; `python ingest.py ./docs` is equivalent.)
+
+This writes a local FAISS index to `local_index/`. `docs/wiki/` and `PROJECT_UPDATES_NOTES.md` are skipped by default so setup pages do not outrank your knowledge base. Use `--include-wiki` if you want those indexed too.
 
 ---
 
-## Ask a single question (new in Phase 0)
+## Ask questions (new in Phase 0)
 
 After local ingestion:
+
+```bash
+python ask.py
+```
+
+Type your question at the `Question>` prompt. Type `quit` to exit.
+
+For a single question without chat mode:
 
 ```bash
 python ask.py "Who directed Inception?"

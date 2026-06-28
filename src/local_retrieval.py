@@ -11,6 +11,7 @@ import faiss
 import numpy as np
 from sklearn.feature_extraction.text import HashingVectorizer
 
+from src.document_readers import IngestReadOptions, SUPPORTED_SUFFIXES, read_document
 from src.env import (
     get_local_embedding_backend,
     get_local_embedding_model_name,
@@ -20,6 +21,13 @@ from src.env import (
 
 INDEX_FILE = "index.faiss"
 METADATA_FILE = "chunks.jsonl"
+
+# Default ingest exclusions: wiki holds setup docs; project notes are not Q&A content.
+DEFAULT_INGEST_EXCLUDE_DIRS = ("wiki",)
+DEFAULT_INGEST_EXCLUDE_FILES = (
+    "PROJECT_UPDATES_NOTES.md",
+    "IEEE_STATUS_REPORT_JUNE2026.docx",
+)
 
 
 @dataclass
@@ -84,25 +92,28 @@ def embed_texts(
     ).astype("float32")
 
 
-def read_supported_file(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix in {".txt", ".md"}:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    if suffix == ".pdf":
-        try:
-            from pypdf import PdfReader
-        except ImportError as exc:
-            raise RuntimeError(
-                "PDF ingestion requires pypdf. Run: pip install -r requirements.txt"
-            ) from exc
-
-        reader = PdfReader(str(path))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        return "\n\n".join(pages)
-    raise ValueError(f"Unsupported file type: {path}")
+def read_supported_file(
+    path: Path,
+    *,
+    read_options: IngestReadOptions | None = None,
+) -> str:
+    """Extract plain text from a supported document (delegates to document_readers)."""
+    return read_document(path, read_options)
 
 
-def _is_excluded(path: Path, exclude_dir_names: Sequence[str]) -> bool:
+def _is_excluded(
+    path: Path,
+    exclude_dir_names: Sequence[str],
+    exclude_file_names: Sequence[str],
+) -> bool:
+    if exclude_file_names and path.name in exclude_file_names:
+        return True
+    # Word temporary lock files (e.g. ~$EE_STATUS_REPORT_JUNE2026.docx)
+    if path.name.startswith("~$"):
+        return True
+    # Generated status reports are for humans, not RAG retrieval
+    if path.suffix.lower() == ".docx" and "STATUS_REPORT" in path.name.upper():
+        return True
     if not exclude_dir_names:
         return False
     return any(part in exclude_dir_names for part in path.parts)
@@ -112,16 +123,20 @@ def iter_supported_files(
     root: Path,
     *,
     exclude_dir_names: Sequence[str] = (),
+    exclude_file_names: Sequence[str] = (),
 ) -> Iterable[Path]:
-    supported = {".pdf", ".txt", ".md"}
+    supported = set(SUPPORTED_SUFFIXES)
     if root.is_file():
-        if root.suffix.lower() in supported and not _is_excluded(root, exclude_dir_names):
+        if (
+            root.suffix.lower() in supported
+            and not _is_excluded(root, exclude_dir_names, exclude_file_names)
+        ):
             yield root
         return
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in supported:
             continue
-        if _is_excluded(path, exclude_dir_names):
+        if _is_excluded(path, exclude_dir_names, exclude_file_names):
             continue
         yield path
 
@@ -148,18 +163,39 @@ def build_local_index(
     chunk_size: int = 1200,
     overlap: int = 200,
     batch_size: int = 16,
-    exclude_dir_names: Sequence[str] = ("wiki",),
+    exclude_dir_names: Sequence[str] = DEFAULT_INGEST_EXCLUDE_DIRS,
+    exclude_file_names: Sequence[str] = DEFAULT_INGEST_EXCLUDE_FILES,
+    read_options: IngestReadOptions | None = None,
 ) -> int:
     index_dir = index_dir or get_local_index_dir()
     input_path = input_path.expanduser().resolve()
     if not input_path.exists():
         raise FileNotFoundError(f"Input path does not exist: {input_path}")
 
+    read_options = read_options or IngestReadOptions.from_env()
     chunks: list[LocalChunk] = []
-    for file_path in iter_supported_files(input_path, exclude_dir_names=exclude_dir_names):
-        text = read_supported_file(file_path)
-        rel_source = str(file_path.relative_to(input_path)) if input_path.is_dir() else file_path.name
-        for chunk_index, chunk in enumerate(chunk_text(text, chunk_size=chunk_size, overlap=overlap)):
+    skipped: list[str] = []
+    for file_path in iter_supported_files(
+        input_path,
+        exclude_dir_names=exclude_dir_names,
+        exclude_file_names=exclude_file_names,
+    ):
+        rel_source = (
+            str(file_path.relative_to(input_path))
+            if input_path.is_dir()
+            else file_path.name
+        )
+        try:
+            text = read_supported_file(file_path, read_options=read_options)
+        except Exception as exc:
+            skipped.append(f"{rel_source}: {exc}")
+            continue
+        if not text.strip():
+            skipped.append(f"{rel_source}: no extractable text")
+            continue
+        for chunk_index, chunk in enumerate(
+            chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+        ):
             chunks.append(
                 LocalChunk(
                     doc_id=f"{rel_source}#{chunk_index}",
@@ -169,9 +205,16 @@ def build_local_index(
                 )
             )
 
+    if skipped:
+        print("Skipped files during ingest:")
+        for line in skipped:
+            print(f"  - {line}")
+
     if not chunks:
+        formats = ", ".join(sorted(SUPPORTED_SUFFIXES))
         raise RuntimeError(
-            f"No supported content found under {input_path}. Add .pdf, .txt, or .md files."
+            f"No supported content found under {input_path}. "
+            f"Add files with extensions: {formats}"
         )
 
     model = load_embedding_model()

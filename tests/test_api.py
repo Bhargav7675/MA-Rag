@@ -92,6 +92,77 @@ def test_ask_rejects_empty_question(client: TestClient):
     assert response.status_code == 422
 
 
+def test_ask_stream_returns_503_when_index_missing(client: TestClient):
+    with patch("src.api.server.local_index_exists", return_value=False):
+        response = client.post("/ask/stream", json={"question": "test question?"})
+
+    assert response.status_code == 503
+
+
+def test_ask_stream_emits_sse_events(client: TestClient):
+    from src.workflow.events import WorkflowEvent, WorkflowEventKind
+
+    events = [
+        WorkflowEvent(
+            run_id="stream01",
+            kind=WorkflowEventKind.WORKFLOW_START,
+            payload={"question": "test?"},
+        ),
+        WorkflowEvent(
+            run_id="stream01",
+            kind=WorkflowEventKind.WORKFLOW_COMPLETE,
+            payload={"answer": "Phase 0", "confidence": 10, "verify_passed": True, "route": "simple_rag"},
+        ),
+    ]
+
+    def fake_stream(*_args, **_kwargs):
+        yield from events
+
+    mock_service = MagicMock()
+    mock_service.ask_stream.side_effect = fake_stream
+
+    with (
+        patch("src.api.server.local_index_exists", return_value=True),
+        patch("src.api.server.get_workflow_service", return_value=mock_service),
+    ):
+        response = client.post("/ask/stream", json={"question": "test question?"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert "FINAL ANSWER" in body
+    assert "Phase 0" in body
+    assert "workflow_start" not in body  # human format, not raw json kind
+    mock_service.ask_stream.assert_called_once()
+
+
+def test_ask_stream_json_format(client: TestClient):
+    from src.workflow.events import WorkflowEvent, WorkflowEventKind
+
+    events = [
+        WorkflowEvent(
+            run_id="stream01",
+            kind=WorkflowEventKind.WORKFLOW_START,
+            payload={"question": "test?"},
+        ),
+    ]
+
+    mock_service = MagicMock()
+    mock_service.ask_stream.return_value = iter(events)
+
+    with (
+        patch("src.api.server.local_index_exists", return_value=True),
+        patch("src.api.server.get_workflow_service", return_value=mock_service),
+    ):
+        response = client.post(
+            "/ask/stream?stream_format=json",
+            json={"question": "test question?"},
+        )
+
+    assert response.status_code == 200
+    assert "workflow_start" in response.text
+
+
 def test_tools_returns_503_when_index_missing(client: TestClient):
     with patch("src.api.server.local_index_exists", return_value=True), patch(
         "src.api.server.get_workflow_service",

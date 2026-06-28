@@ -22,7 +22,8 @@ from src.prompt_template import (
     evidence_curator_slm_output_format_addon,
     evidence_curator_system_message,
 )
-from src.slm_helpers import parse_evidence_review_response
+from src.env import get_fast_mode
+from src.slm_helpers import extract_factual_answer_from_context, parse_evidence_review_response
 from src.utils import EvidenceReviewFormat
 
 AGENT_ID = "evidence_curator"
@@ -41,7 +42,7 @@ class EvidenceCuratorAgent:
         self.role = role
 
     def run(self, request: EvidenceReviewRequest) -> EvidenceReviewResponse:
-        heuristic = self._heuristic_review(request.chunks)
+        heuristic = self._heuristic_review(request.question, request.chunks)
         if heuristic is not None:
             return EvidenceReviewResponse(
                 run_id=request.run_id,
@@ -50,6 +51,16 @@ class EvidenceCuratorAgent:
                 gaps=heuristic["gaps"],
                 proceed=heuristic["proceed"],
                 rationale=heuristic["rationale"],
+            )
+
+        if get_fast_mode() and any(c.text.strip() for c in request.chunks):
+            return EvidenceReviewResponse(
+                run_id=request.run_id,
+                step_index=request.step_index,
+                sufficiency=EvidenceSufficiency.SUFFICIENT,
+                gaps=[],
+                proceed=True,
+                rationale="Fast mode: proceed with retrieved chunks.",
             )
 
         chunks_text = self._format_chunks(request.chunks)
@@ -89,7 +100,7 @@ class EvidenceCuratorAgent:
             rationale=parsed["rationale"],
         )
 
-    def _heuristic_review(self, chunks: list[RetrievedChunk]):
+    def _heuristic_review(self, question: str, chunks: list[RetrievedChunk]):
         if not chunks:
             return {
                 "sufficiency": EvidenceSufficiency.INSUFFICIENT,
@@ -105,6 +116,18 @@ class EvidenceCuratorAgent:
                 "gaps": ["Retrieved chunks are empty"],
                 "proceed": False,
                 "rationale": "All retrieved chunks were empty.",
+            }
+
+        blob = "\n\n".join(c.text for c in nonempty)
+        direct_answer = extract_factual_answer_from_context(question, blob)
+        if direct_answer:
+            return {
+                "sufficiency": EvidenceSufficiency.SUFFICIENT,
+                "gaps": [],
+                "proceed": True,
+                "rationale": (
+                    f"Retrieved chunks contain a direct answer ({direct_answer})."
+                ),
             }
 
         lower_texts = [c.text.lower() for c in nonempty]

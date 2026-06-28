@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a small local FAISS index from PDFs, Markdown, or text files."""
+"""Build a local FAISS index from corporate documents (PDF, Office, text)."""
 
 from __future__ import annotations
 
@@ -8,15 +8,31 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.document_readers import IngestReadOptions, SUPPORTED_SUFFIXES
 from src.env import get_local_index_dir
-from src.local_retrieval import build_local_index
+from src.local_retrieval import (
+    DEFAULT_INGEST_EXCLUDE_DIRS,
+    DEFAULT_INGEST_EXCLUDE_FILES,
+    build_local_index,
+)
 
 load_dotenv()
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Ingest local documents for MA-RAG")
-    parser.add_argument("path", help="File or directory containing .pdf, .txt, or .md files")
+    formats = ", ".join(sorted(SUPPORTED_SUFFIXES))
+    parser = argparse.ArgumentParser(
+        description=(
+            "Ingest local documents for MA-RAG (default: ./docs). "
+            f"Supported: {formats}"
+        ),
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default="./docs",
+        help=f"File or directory with supported documents (default: ./docs)",
+    )
     parser.add_argument(
         "--index-dir",
         type=Path,
@@ -31,12 +47,27 @@ def parse_args():
         action="store_true",
         help="Include docs/wiki/ in the index (excluded by default — demo pages rank above project KB)",
     )
+    parser.add_argument(
+        "--pdf-password",
+        default=None,
+        help="Password for encrypted PDFs (overrides MA_RAG_PDF_PASSWORD for this run)",
+    )
+    parser.add_argument(
+        "--no-ocr",
+        action="store_true",
+        help="Disable OCR for scanned/image-only PDFs",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    exclude_dir_names = () if args.include_wiki else ("wiki",)
+    exclude_dir_names = () if args.include_wiki else DEFAULT_INGEST_EXCLUDE_DIRS
+    exclude_file_names = DEFAULT_INGEST_EXCLUDE_FILES
+    read_options = IngestReadOptions.from_env(
+        pdf_password=args.pdf_password,
+        enable_pdf_ocr=not args.no_ocr,
+    )
     count = build_local_index(
         Path(args.path),
         index_dir=args.index_dir,
@@ -44,12 +75,23 @@ def main():
         overlap=args.overlap,
         batch_size=args.batch_size,
         exclude_dir_names=exclude_dir_names,
+        exclude_file_names=exclude_file_names,
+        read_options=read_options,
     )
+    excluded: list[str] = []
     if exclude_dir_names:
-        print(f"Excluded directory names: {', '.join(exclude_dir_names)} (use --include-wiki to index them)")
+        excluded.append(f"dirs: {', '.join(exclude_dir_names)}")
+    if exclude_file_names:
+        excluded.append(f"files: {', '.join(exclude_file_names)}")
+    if excluded:
+        print(f"Excluded from index — {'; '.join(excluded)} (use --include-wiki to index wiki)")
     print(f"Indexed {count} chunks into {args.index_dir}")
-    print("Now ask with:")
-    print('  python ask.py "your question"')
+    print()
+    print("Next step — start the chat (questions go inside this program):")
+    print("  python ask.py")
+    print()
+    print("At the Question> prompt, type your question. Type quit to exit.")
+    print('One-shot example: python ask.py "What did they launch in 2021?"')
 
 
 if __name__ == "__main__":
