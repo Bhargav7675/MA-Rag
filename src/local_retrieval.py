@@ -22,12 +22,9 @@ from src.env import (
 INDEX_FILE = "index.faiss"
 METADATA_FILE = "chunks.jsonl"
 
-# Default ingest exclusions: wiki holds setup docs; project notes are not Q&A content.
+# Wiki pages are setup docs, not retrieval corpus.
 DEFAULT_INGEST_EXCLUDE_DIRS = ("wiki",)
-DEFAULT_INGEST_EXCLUDE_FILES = (
-    "PROJECT_UPDATES_NOTES.md",
-    "IEEE_STATUS_REPORT_JUNE2026.docx",
-)
+DEFAULT_INGEST_EXCLUDE_FILES: tuple[str, ...] = ()
 
 
 @dataclass

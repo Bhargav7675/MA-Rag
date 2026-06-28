@@ -5,7 +5,6 @@
 - Dependencies, `src/env.py`, `src/llm.py`
 - `ingest.py`, local FAISS, `ask.py`
 - Demo knowledge under `docs/`
-- `PHASE_0_REPORT.md`
 
 ## Done — Track B + SLM + Track C (local prototype)
 

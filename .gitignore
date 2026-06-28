@@ -15,3 +15,13 @@ __pycache__/
 adhoc.py
 .envrc
 .python-version
+
+# Local-only notes, scripts, and reports
+scripts/
+reports/
+PLAN.md
+PHASE_0_REPORT.md
+IEEE_STATUS_REPORT*.docx
+docs/IEEE_STATUS_REPORT*.docx
+docs/PROJECT_UPDATES_NOTES.md
+~$*

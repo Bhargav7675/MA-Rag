@@ -3,7 +3,7 @@
 Multi-Agent Retrieval-Augmented Generation — local prototype with document ingestion and interactive Q&A.
 
 **Paper:** [MA-RAG (arXiv:2505.20096)](https://arxiv.org/abs/2505.20096)  
-**Repo:** Code, `README.md`, and `PHASE_0_REPORT.md` in the main repository.
+**Repo:** Application code and `README.md` in the main repository; setup guides in this wiki.
 
 ---
 

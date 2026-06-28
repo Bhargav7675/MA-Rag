@@ -1,113 +1,86 @@
-# MA-RAG: Multi-Agent Retrieval-Augmented Generation via Collaborative Chain-of-Thought Reasoning
+# MA-RAG: Multi-Agent Retrieval-Augmented Generation
 
-This repository contains the source code for the paper:  
-[MA-RAG: Multi-Agent Retrieval-Augmented Generation via Collaborative Chain-of-Thought Reasoning](https://arxiv.org/abs/2505.20096).
+Research implementation of [MA-RAG: Multi-Agent Retrieval-Augmented Generation via Collaborative Chain-of-Thought Reasoning](https://arxiv.org/abs/2505.20096).
 
 ![MA-RAG Architecture](img/arch.png)
 
----
-
-## Installation
+## Quick start
 
 ```bash
+git clone https://github.com/Bhargav7675/M-Rag.git
 cd MA-RAG
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-# Optional GPU FAISS (Linux + CUDA):
-# pip install -r requirements-gpu.txt
-```
-
----
-
-## Environment
-
-Copy `.env.sample` to `.env` and set your key:
-
-```bash
 cp .env.sample .env
 ```
 
-```env
-OPENAI_API_KEY=your_openai_api_key_here
-MODEL_NAME=gpt-4o-mini
-```
-
-See `.env.sample` for optional paths (`MA_RAG_DATA_DIR`, `MA_RAG_INDEX_DIR`, device overrides).
-
----
-
-## Ingest local documents (new in Phase 0)
-
-Put all knowledge files in **`docs/`** (IEEE KB, demo corpora, your own files — one folder). Supported formats: **`.pdf`**, **`.txt`**, **`.md`**, **`.docx`**, **`.xlsx`**, **`.xls`**, **`.pptx`**. Password-protected PDFs and scanned PDFs (OCR) are supported — see `.env.sample`. Then run:
+Index your documents and ask a question:
 
 ```bash
-python ingest.py
+python ingest.py          # default: ./docs → local_index/
+python ask.py "Your question here"
 ```
 
-(`./docs` is the default path; `python ingest.py ./docs` is equivalent.)
+Interactive chat: `python ask.py` (type `quit` to exit).
 
-This writes a local FAISS index to `local_index/`. `docs/wiki/` and `PROJECT_UPDATES_NOTES.md` are skipped by default so setup pages do not outrank your knowledge base. Use `--include-wiki` if you want those indexed too.
+See [docs/wiki/Quick-Start.md](docs/wiki/Quick-Start.md) for SLM (Ollama), API, and agentic mode.
 
----
+## Document ingestion
 
-## Ask questions (new in Phase 0)
-
-After local ingestion:
+Place knowledge files in **`docs/`**. Supported formats: `.pdf`, `.txt`, `.md`, `.docx`, `.xlsx`, `.xls`, `.pptx`. Password-protected and scanned PDFs are supported — see `.env.sample`.
 
 ```bash
-python ask.py
+python ingest.py              # indexes ./docs (skips docs/wiki/ by default)
+python ingest.py --include-wiki
 ```
 
-Type your question at the `Question>` prompt. Type `quit` to exit.
+## Configuration
 
-For a single question without chat mode:
+Copy `.env.sample` to `.env`. Key variables:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `OPENAI_API_KEY` | Cloud LLM (optional if using Ollama) |
+| `MODEL_NAME` | OpenAI model (default `gpt-4o-mini`) |
+| `MA_RAG_LLM_PROVIDER` | Set to `ollama` for on-prem SLM |
+| `MA_RAG_OLLAMA_MODEL` | Ollama model (e.g. `llama3.2:3b`) |
+
+Paths and device overrides: see `.env.sample`.
+
+## API
 
 ```bash
-python ask.py "Who directed Inception?"
+python run_api.py
+# POST /ask          — JSON response
+# POST /ask/stream   — SSE agent trace
 ```
 
-`ask.py` uses `local_index/` first when available, otherwise it looks for the original DPR/Wikipedia index under `save_embs/gte-ml-base/`.
+## Benchmark (original paper workflow)
 
-Optional JSON trace:
+1. Place KILT dev JSONL files in `data/benchmarks/` ([data/README.md](data/README.md)).
+2. `python corpus/embed_corpus.py`
+3. `python main.py --model gpt4omini --dataset hotpotqa --exp plan_rag_extract --gpus 0`
 
-```bash
-python ask.py "Your question here" --output-json outputs/last_run.json
-```
+## Project layout
 
----
+| Path | Role |
+| ---- | ---- |
+| `agents/` | Specialized workflow agents |
+| `src/workflow/` | Orchestration engine |
+| `src/local_retrieval.py` | FAISS ingest and search |
+| `docs/` | Knowledge corpus and wiki |
+| `tests/` | Unit and integration tests |
 
-## Batch benchmark (`main.py`)
-
-1. Place KILT dev JSONL files in `data/benchmarks/` (see [data/README.md](data/README.md)).
-2. Embed corpus (if needed): `python corpus/embed_corpus.py`
-3. Run:
-
-```bash
-python main.py --model gpt4omini --dataset hotpotqa --exp plan_rag_extract --gpus 0
-```
-
----
-
-## Phase 0 fixes (this fork)
-
-- Compatible `requirements.txt` (`faiss-cpu`, aligned LangChain pins)
-- Unified `langchain_openai.ChatOpenAI` via `src/llm.py`
-- `OPENAI_API_KEY` / `MODEL_NAME` env alignment (legacy `API_KEY` still works)
-- Configurable data/index paths (no hardcoded `/scratch2/...`)
-- Local `.pdf` / `.txt` / `.md` ingestion with `ingest.py`
-- Interactive `ask.py` entry point
-- CPU FAISS fallback when no GPU is available
-
----
+Run tests: `PYTHONPATH=. pytest -q`
 
 ## Citation
 
 ```bibtex
 @article{marag2025,
-      title={MA-RAG: Multi-Agent Retrieval-Augmented Generation via Collaborative Chain-of-Thought Reasoning}, 
-      author={Thang Nguyen, Peter Chin, Yu-Wing Tai},
-      year={2025},
-      journal={arXiv preprint arXiv:2505.20096},
+  title={MA-RAG: Multi-Agent Retrieval-Augmented Generation via Collaborative Chain-of-Thought Reasoning},
+  author={Thang Nguyen, Peter Chin, Yu-Wing Tai},
+  year={2025},
+  journal={arXiv preprint arXiv:2505.20096},
 }
 ```
